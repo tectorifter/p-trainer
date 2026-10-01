@@ -1,8 +1,6 @@
 # pokemon-trainer
 
-Gen 3 (Emerald) TRAIN editor, ported from g9-battle-engine 4.9.3
-`stats/train_screen.lua` and adapted so the row also lists on Emerald/RSE
-party menus (the engine build only lists on FRLG).
+Gen 3 (Emerald) pokemon trainer and difficulty setting mod.
 
 ## TRAIN editor
 
@@ -10,7 +8,7 @@ party menus (the engine build only lists on FRLG).
 - Page one edits IVs, EVs, nature and gender; the ABILITY tab swaps ability
 - slot 1/2 for 5000 on commit; the HIDDEN tab is a stub (reports, no-op).
 - Page two (MOVES) teaches Egg / Relearn / Tutor moves for 5000 each, with a
-- forget-slot picker; HM slots are refused. Needs national_dex for move data.
+- forget-slot picker; HM slots are refused.
 - Option `1512 EVS`: OFF / NPC / PLAYER / BOTH (252 per stat stays; the total
 - cap becomes 1512 for the chosen side). TRAIN enforces it on commit; enemy
 - mons are stamped `ptEvCap1512` at battle start when the scope covers them;
@@ -50,13 +48,3 @@ party menus (the engine build only lists on FRLG).
 - `battle/item_reuse.lua`, `battle/exp_share.lua`, `battle/doubles.lua`,
 - `battle/level_adapt.lua`, `battle/difficulty.lua` — battle systems.
 - `overworld/rematch.lua` — the `world.talk` rematch question.
-
-## Coexistence
-
-On FRLG sessions where g9-battle-engine's own TRAIN SCREEN row is ON, this
-mod leaves the menu alone (the engine owns it there). Everywhere else on
-Gen 3 it injects its own row.
-
-## Verify
-
-luaparse 5.1 clean on all .lua files; page_refresh with no console errors.
