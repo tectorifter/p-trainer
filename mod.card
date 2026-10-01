@@ -1,0 +1,19 @@
+return {
+  summary = "Gen 3 (Emerald) TRAIN editor: IVs, EVs, nature, ability slot and Egg/Relearn/Tutor moves from the party menu, plus item reuse, Exp. Share, forced doubles, rematches, level adapt and difficulty.",
+  author = "Gen1Recomp Mod Studio",
+  tags = { "gen3", "emerald", "trainer", "train", "ev" },
+  differences = {
+    added = {
+      "A TRAIN row in the Gen 3 field party menu (Emerald included) opening a 240x160 editor: IV / EV / nature / gender page, ability-slot swap, and a MOVES page teaching Egg, Relearn and Tutor moves for 5000 each.",
+      "A 1512 EVS option: OFF, NPC (enemy trainer mons may hold 1512 total EVs), PLAYER (your mons may), BOTH.",
+      "ITEM REUSE: held items consumed or lost in battle return afterwards. EXP SHARE: off / gen1 / gen2 / gen3 / gen6 party splits on Gen 3's own exp seam.",
+      "DOUBLES forces 2+ mon trainers into native double battles. REMATCHES asks beaten trainers for a paid rematch. LV ADAPT (-5/+5/+10/0) and DIFFICULTY (easy/normal/hard/very hard/hell) retune trainer teams.",
+    },
+    known = {
+      "The HIDDEN ability button is a stub in this port: it reports that hidden abilities are not available yet and changes nothing.",
+      "The MOVES page needs move data: with national_dex installed it lists Egg/Relearn/Tutor moves, without it the page reports that no move data is available.",
+      "an unofficial fan mod: Pokemon and all related names and assets are (c) Nintendo / Creatures Inc. / GAME FREAK inc. / The Pokemon Company and this project is not affiliated with or endorsed by them",
+    },
+  },
+  compat = { engine = ">=0.0.0-0 <2.0.0", modApi = 2 },
+}

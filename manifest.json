@@ -1,0 +1,26 @@
+{
+  "id": "pokemon-trainer",
+  "name": "pokemon-trainer",
+  "version": "0.2.1",
+  "api": 2,
+  "entry": "main.lua",
+  "profile": "content",
+  "game_version": ">=0.1.45",
+  "games": [
+    "gen3"
+  ],
+  "category": "GAMEPLAY",
+  "priority": 95,
+  "permissions": [
+    "engine_internals"
+  ],
+  "dependencies": [],
+  "optional_dependencies": [
+    "national_dex"
+  ],
+  "description": "Emerald TRAIN editor: IVs, EVs, nature, ability + move tutor.",
+  "options_schema": "options.lua",
+  "experimental": false,
+  "conflicts": [],
+  "incompatible": []
+}
