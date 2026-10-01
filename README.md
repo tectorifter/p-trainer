@@ -2,6 +2,9 @@
 
 Gen 3 (Emerald) pokemon trainer and difficulty setting mod.
 
+Read this if you want to know how this mod hooks to emerald and be aware of its compatibilities:
+https://github.com/tectorifter/p-trainer/blob/main/SEAMS.md
+
 ## TRAIN editor
 
 - Adds TRAIN to the field party menu. Never for eggs or battle-switch menus.
