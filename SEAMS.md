@@ -113,12 +113,6 @@ Required engine modules are presence-gated. Absence is never fatal.
 | UI | `src.ui.game3.party_menu`, `.stack`, `.rse.scene_kit`, `.frlg_font` |
 | Render | `src.render.Font`, `love.graphics` |
 
-Optional peers via `mod.find`:
-
-| Peer | Used for |
-|---|---|
-| `national_dex` | `exports.statsBySpecies` |
-| `g9-battle-engine` | `options.get("train_screen")`. This mod stands down on FRLG when that TRAIN row is on |
 
 ## Public surface
 
