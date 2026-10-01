@@ -41,6 +41,8 @@ https://github.com/tectorifter/p-trainer/blob/main/SEAMS.md
 - (50%), VERY HARD (75%), HELL (100% = 31 IV and a full EV spread). The EV
 - share of the raised budget follows `1512 EVS`: HELL with NPC/BOTH cover is
 - 252 in every stat. Wild battles are skipped.
+- `DMG SPLIT` (default OFF): gen 4 damage split per move damage category
+- (Physical, Special), instead of it being decided by move's type (fire, water...)
 
 ## Layout
 
