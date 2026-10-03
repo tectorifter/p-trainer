@@ -34,8 +34,8 @@ return function(mod)
       label = "EXP SHARE",
       type = "choice",
       default = "off",
-      choices = { { "OFF", "off" }, { "GENERATION 1", "gen1" }, { "GENERATION 2", "gen2" }, { "GENERATION 3", "gen3" }, { "GENERATION 6", "gen6" } },
-      description = "Party-wide experience: GEN 1 Exp. All, GEN 2 held share shown twice, GEN 3 same split shown once, GEN 6 battlers full and bench half. OFF leaves the award alone.",
+      choices = { { "OFF", "off" }, { "GEN 1", "gen1" }, { "GEN 2", "gen2" }, { "GEN 3", "gen3" }, { "GEN 6", "gen6" } },
+      description = "Party-wide experience, Bulbapedia splits off the same base the engine uses: GEN 1 battlers half each, whole party shares that amount again; GEN 2/3 battlers split half, bench splits half; GEN 6 battlers full, bench half. OFF leaves the award alone.",
     },
     {
       key = "doubles",
@@ -67,6 +67,20 @@ return function(mod)
       choices = { { "VANILLA", "vanilla" }, { "EASY", "easy" }, { "NORMAL", "normal" }, { "HARD", "hard" }, { "VERY HARD", "veryhard" }, { "HELL", "hell" } },
       description = "Enemy IVs/EVs: EASY 0, NORMAL 25%, HARD 50%, VERY HARD 75%, HELL 100% (31 IV, 252 per stat when 1512 EVS covers enemies). VANILLA leaves trainers alone.",
     },
+    {
+      key = "damage_split",
+      label = "DAMAGE SPLIT",
+      type = "toggle",
+      default = false,
+      description = "ON: damaging moves use gen 4 physical/special class, not gen 3 type split (52 moves change). OFF: vanilla.",
+    },
+    {
+      key = "enemy_evo",
+      label = "ENEMY EVO",
+      type = "toggle",
+      default = false,
+      description = "ON: enemy trainer mons evolve when their level allows it (level evos at level; trade/happiness 25, or 40 for final evos of 3-stage lines; stones 35). OFF: vanilla.",
+    },
   })
   mod.exports.EV_TOTAL = 510
   mod.exports.EV_TOTAL_1512 = 1512
@@ -89,7 +103,9 @@ return function(mod)
   boot("train_screen", function() loadSibling("train/train_screen.lua")(mod) end)
   boot("item_reuse", function() loadSibling("battle/item_reuse.lua")(mod) end)
   boot("exp_share", function() loadSibling("battle/exp_share.lua")(mod) end)
+  boot("damage_split", function() loadSibling("battle/damage_split.lua")(mod) end)
   boot("doubles", function() loadSibling("battle/doubles.lua")(mod) end)
+  boot("enemy_evo", function() loadSibling("battle/enemy_evo.lua")(mod) end)
   boot("level_adapt", function() loadSibling("battle/level_adapt.lua")(mod) end)
   boot("difficulty", function() loadSibling("battle/difficulty.lua")(mod) end)
   boot("rematch", function() loadSibling("overworld/rematch.lua")(mod) end)

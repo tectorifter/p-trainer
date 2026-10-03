@@ -46,11 +46,7 @@ return function(mod)
     Calm = { up = "spd", down = "atk" }, Gentle = { up = "spd", down = "def" },
     Sassy = { up = "spd", down = "spe" }, Careful = { up = "spd", down = "spa" },
   }
-  local MOVE_FIELD_LABELS = { "RELEARN", "EGG", "TUTOR" }
-  local HM_MOVES = {
-    CUT = true, FLY = true, SURF = true, STRENGTH = true, FLASH = true,
-    ROCKSMASH = true, WATERFALL = true, DIVE = true,
-  }
+  local MOVE_FIELD_LABELS = { "RELEARN", "TM", "EGG", "TUTOR" }
   local MOVE_COST = 5000
   local IV_COST = 200
   local EV_COST = 125
@@ -60,7 +56,7 @@ return function(mod)
   local TAB_IV, TAB_EV, TAB_NAT, TAB_GENDER = 1, 2, 3, 4
   local TAB_MOVES, TAB_ABILITY, TAB_HIDDEN = 5, 6, 7
   local TAB_LABELS = { "IV", "EV", "NAT", "M/F", "MOVES", "ABIL", "HID" }
-  local TAB_WIDTHS = { 26, 26, 32, 32, 48, 38, 30 }
+  local TAB_WIDTHS = { 22, 22, 30, 30, 42, 36, 26 }
   local function clamp(v, lo, hi)
     v = tonumber(v) or 0
     if v < lo then return lo end
@@ -147,18 +143,23 @@ return function(mod)
     return 10
   end
   local function slotMoveName(move)
+    if type(move) == "number" then
+      local name = gen3MoveName(move)
+      if name then return string.upper(name) end
+      return nil
+    end
     if type(move) ~= "table" then return nil end
     if type(move.id) == "string" and move.id ~= "" then
       return string.upper(move.id)
     end
-    local num = tonumber(move.moveId or move.move)
+    local num = tonumber(move.moveId or move.move or move.id)
     if num then
       local name = gen3MoveName(num)
       if name then return string.upper(name) end
     end
     return nil
   end
-  local gen3Session = nil
+    local gen3Session = nil
   local gen3Committed = setmetatable({}, { __mode = "k" })
   local function playerEvCap()
     if mod.exports and type(mod.exports.evTotalCapFor) == "function" then
@@ -201,24 +202,143 @@ return function(mod)
     if ok and type(Game) == "table" then return Game.save end
     return nil
   end
-  local function ndStatsBySpecies(species)
-    local nd = mod.find and mod.find("national_dex")
-    local ex = nd and nd.exports
-    if not (ex and type(ex.statsBySpecies) == "function") then return nil end
-    local ok, rec = pcall(ex.statsBySpecies, species)
-    if ok and type(rec) == "table" then return rec end
-    return nil
-  end
-  local function baseStatOf(rec, key)
-    if type(rec) ~= "table" then return nil end
-    local bs = rec.baseStats or rec.base
-    if type(bs) ~= "table" then return nil end
-    for _, k in ipairs(STAT_KEYS[key] or { key }) do
-      if tonumber(bs[k]) then return tonumber(bs[k]) end
+  local BASESTAT_FNS = { "baseStats", "stats", "base" }
+  local baseRecCache = {}
+  local function nativeBaseRec(species)
+    if species == nil then return nil end
+    local hit = baseRecCache[species]
+    if hit ~= nil then return hit ~= false and hit or nil end
+    local P = g3Pokemon()
+    if P then
+      for _, fname in ipairs(BASESTAT_FNS) do
+        if type(P[fname]) == "function" then
+          local ok, rec = pcall(P[fname], species)
+          if ok and type(rec) == "table" then
+            local good = true
+            for _, key in ipairs(STAT_ORDER) do
+              local v = statOf(rec, key)
+              if not (tonumber(v) and tonumber(v) > 0) then good = false break end
+            end
+            if good then
+              baseRecCache[species] = rec
+              return rec
+            end
+          end
+        end
+      end
     end
+    baseRecCache[species] = false
     return nil
   end
-  local function natureMult(nature, stat)
+  local function nativeBaseStat(species, key)
+    return statOf(nativeBaseRec(species), key)
+  end
+  local poolCache = {}
+  local function moveLearnMod()
+    local ok, ML = pcall(require, "src.core.game3.move_learn")
+    if ok and type(ML) == "table" then return ML end
+    return nil
+  end
+  local function speciesNum(monOrSpecies)
+    local P = g3Pokemon()
+    local s = monOrSpecies
+    if type(s) == "table" then s = s.species end
+    if P then
+      if type(s) == "table" then
+        local ok, n = pcall(P.speciesOf, s)
+        if ok and tonumber(n) then return tonumber(n) end
+      elseif type(s) == "string" and not tonumber(s)
+        and type(P.speciesFromName) == "function" then
+        local ok, n = pcall(P.speciesFromName, s)
+        if ok and tonumber(n) then return tonumber(n) end
+      end
+    end
+    return tonumber(s)
+  end
+  local function pushMoveId(out, seen, moveId, level)
+    local id = tonumber(moveId)
+    if not id or id < 1 or seen[id] then return end
+    local name = gen3MoveName(id)
+    if not name or name == "" then return end
+    seen[id] = true
+    out[#out + 1] = { id = id, name = name, level = tonumber(level) }
+  end
+  local function nativeMovePools(mon)
+    local empty = { relearn = {}, tm = {}, egg = {}, tutor = {} }
+    local P = g3Pokemon()
+    if not P then return empty end
+    local sp = speciesNum(mon)
+    if not sp then return empty end
+    local level = 100
+    if type(mon) == "table" then level = tonumber(mon.level) or 100 end
+    local key = sp .. ":" .. level
+    local hit = poolCache[key]
+    if hit then return hit end
+    local pools = { relearn = {}, tm = {}, egg = {}, tutor = {} }
+    local seenR, seenT, seenE, seenU = {}, {}, {}, {}
+    local ML = moveLearnMod()
+    if ML and type(ML.relearnableMoves) == "function" and type(mon) == "table" then
+      local ok, ids = pcall(ML.relearnableMoves, mon)
+      if ok and type(ids) == "table" then
+        for _, id in ipairs(ids) do pushMoveId(pools.relearn, seenR, id, nil) end
+      end
+    end
+    if #pools.relearn == 0 and type(P.learnset) == "function" then
+      local ok, set = pcall(P.learnset, sp)
+      if ok and type(set) == "table" then
+        for _, e in ipairs(set) do
+          local lv, mv
+          if type(e) == "table" then
+            lv = tonumber(e[1] or e.level)
+            mv = tonumber(e[2] or e.move)
+          else
+            mv = tonumber(e)
+          end
+          if mv and (lv == nil or lv <= level) then
+            pushMoveId(pools.relearn, seenR, mv, lv)
+          end
+        end
+      end
+    end
+    if type(P.canLearnTmIndex) == "function" and type(P.moveFromTmItem) == "function" then
+      for idx = 0, 57 do
+        local okC, can = pcall(P.canLearnTmIndex, sp, idx)
+        if okC and can then
+          local okM, mid = pcall(P.moveFromTmItem, 289 + idx)
+          if okM and tonumber(mid) then
+            local isHm = false
+            if type(P.isHmMove) == "function" then
+              local okH, h = pcall(P.isHmMove, tonumber(mid))
+              isHm = okH and h == true
+            end
+            if not isHm then pushMoveId(pools.tm, seenT, tonumber(mid), nil) end
+          end
+        end
+      end
+    end
+    if type(P.eggMoves) == "function" then
+      local ok, list = pcall(P.eggMoves, sp)
+      if ok and type(list) == "table" then
+        for _, id in ipairs(list) do pushMoveId(pools.egg, seenE, id, nil) end
+      end
+    end
+    if ML and type(ML.tutorMoveCount) == "function"
+        and type(ML.canLearnTutorMove) == "function"
+        and type(ML.tutorMove) == "function" then
+      local okN, n = pcall(ML.tutorMoveCount)
+      n = (okN and tonumber(n)) or 0
+      for tut = 0, n - 1 do
+        local okC, can = pcall(ML.canLearnTutorMove, sp, tut)
+        if okC and can then
+          local okM, mid = pcall(ML.tutorMove, tut)
+          if okM and tonumber(mid) then pushMoveId(pools.tutor, seenU, tonumber(mid), nil) end
+        end
+      end
+    end
+    poolCache[key] = pools
+    return pools
+  end
+    local function natureMult(nature, stat)
     local m = NATURE_MOD[nature]
     if not m then return 1 end
     if m.up == stat then return 1.1 end
@@ -234,11 +354,15 @@ return function(mod)
   local function SX(v) return math.floor(v + 0.5) end
   local Frlg = nil
   local FrlgNormal = nil
+  local FrlgWhite = nil
   if isGen3Boot then
     local okF, found = pcall(require, "src.ui.game3.frlg_font")
     if okF and type(found) == "table" and type(found.draw) == "function" then
       Frlg = found
-      if type(found.COLOR) == "table" then FrlgNormal = found.COLOR.NORMAL end
+      if type(found.COLOR) == "table" then
+        FrlgNormal = found.COLOR.NORMAL
+        FrlgWhite = found.COLOR.WHITE
+      end
     end
   end
   local function tprint(text, x, y)
@@ -251,6 +375,15 @@ return function(mod)
       Font.draw(text, SX(x), SX(y))
       return true
     end
+    return false
+  end
+  local function wprint(text, x, y)
+    if Frlg and FrlgWhite then
+      local okD, drawn = pcall(Frlg.draw, tostring(text or ""),
+        SX(x), SX(y), { colors = FrlgWhite, small = true })
+      if okD and (tonumber(drawn) or 0) > 0 then return true end
+    end
+    tprint(text, x, y)
     return false
   end
   local function cursor(x, y)
@@ -289,13 +422,98 @@ return function(mod)
     end
     Font.drawBox(0, 0, w / 8, h / 8)
   end
+  local C_SAGE_A = { 0.66, 0.71, 0.47 }
+  local textH = 10
+  do
+    if Frlg and type(Frlg.face) == "function" then
+      local okF, face = pcall(Frlg.face, { small = true })
+      if okF and type(face) == "table" and tonumber(face.height) then
+        textH = tonumber(face.height)
+      end
+    end
+  end
+  local function cy(y, h)
+    return math.floor(y + (h - textH) / 2 + 0.5)
+  end
+  local function textW(s)
+    s = tostring(s or "")
+    if Frlg and type(Frlg.measure) == "function" then
+      local okM, w = pcall(Frlg.measure, s, { small = true })
+      if okM and tonumber(w) then return tonumber(w) end
+    end
+    return #s * 6
+  end
+  local function cx(x, w, s)
+    return math.floor(x + (w - textW(s)) / 2 + 0.5)
+  end
+  local C_SAGE_B = { 0.64, 0.69, 0.45 }
+  local C_MAGENTA = { 0.62, 0.27, 0.62 }
+  local C_MAGENTA_DK = { 0.42, 0.17, 0.42 }
+  local C_CREAM = { 0.97, 0.94, 0.83 }
+  local C_STATLBL = { 0.78, 0.85, 0.58 }
+  local C_HDRBLUE = { 0.15, 0.44, 0.66 }
+  local C_ORANGE = { 0.90, 0.42, 0.11 }
+  local C_NAVY = { 0.12, 0.15, 0.26 }
+  local C_PANELBLUE = { 0.10, 0.22, 0.55 }
+  local C_WHITE = { 1, 1, 1 }
+  local function rrClamp(w, h, r)
+    r = tonumber(r) or 3
+    if r < 0 then r = 0 end
+    local m = math.floor(math.min(SX(w), SX(h)) / 2)
+    if r > m then r = m end
+    return r
+  end
+  local function fillR(x, y, w, h, c, r)
+    local G = love.graphics
+    G.setColor(c[1], c[2], c[3], 1)
+    G.rectangle("fill", SX(x), SX(y), SX(w), SX(h), rrClamp(w, h, r))
+    G.setColor(0, 0, 0, 1)
+  end
+  local function boxR(x, y, w, h, fc, lc, r)
+    fillR(x, y, w, h, fc, r)
+    local G = love.graphics
+    G.setColor(lc[1], lc[2], lc[3], 1)
+    G.rectangle("line", SX(x) + 0.5, SX(y) + 0.5, SX(w), SX(h),
+      rrClamp(w, h, r))
+    G.setColor(0, 0, 0, 1)
+  end
+  local function selectBox(x, y, w, h, fc)
+    fillR(x, y, w, h, fc, 3)
+    local G = love.graphics
+    G.setColor(C_ORANGE[1], C_ORANGE[2], C_ORANGE[3], 1)
+    G.rectangle("line", SX(x) - 0.5, SX(y) - 0.5, SX(w) + 1, SX(h) + 1, 4)
+    G.rectangle("line", SX(x) + 0.5, SX(y) + 0.5, SX(w) - 1, SX(h) - 1, 2)
+    G.setColor(0, 0, 0, 1)
+  end
+  local function stripeBg(w, h)
+    local G = love.graphics
+    G.setColor(C_SAGE_A[1], C_SAGE_A[2], C_SAGE_A[3], 1)
+    G.rectangle("fill", 0, 0, w, h)
+    local yy = 0
+    local flip = false
+    while yy < h do
+      if flip then
+        G.setColor(C_SAGE_B[1], C_SAGE_B[2], C_SAGE_B[3], 1)
+        G.rectangle("fill", 0, yy, w, 8)
+      end
+      yy = yy + 8
+      flip = not flip
+    end
+    G.setColor(0, 0, 0, 1)
+  end
+  local function pageDots(n, cur, y)
+    local dx = 233 - n * 10
+    for i = 1, n do
+      if i == cur then fillR(dx, y, 6, 6, C_WHITE, 2)
+      else fillR(dx, y, 6, 6, C_MAGENTA_DK, 2) end
+      dx = dx + 10
+    end
+  end
   local Screen = {}
   Screen.__index = Screen
   function Screen.new(game, mon)
-    local def = nil
-    if mon then def = ndStatsBySpecies(mon.species) end
     local self = setmetatable({
-      game = game, mon = mon, def = def,
+      game = game, mon = mon,
       mode = "stats", focus = "tabs", page = TAB_IV, row = 1, col = 1,
       nature = nil, gender = nil, baseNature = nil, baseGender = nil,
       category = 1, moveIndex = 1, moveList = {}, moveNote = nil,
@@ -358,6 +576,15 @@ return function(mod)
   function Screen:abilityName(i)
     local a = self.abilities[i or self.abilityIdx]
     if type(a) == "table" then return tostring(a.name or a.id or "?") end
+    if tonumber(a) then
+      local P = g3Pokemon()
+      if P and type(P.abilityName) == "function" then
+        local ok, n = pcall(P.abilityName, tonumber(a))
+        if ok and type(n) == "string" and n ~= "" then return string.upper(n) end
+      end
+      if tonumber(a) == 0 then return "-------" end
+      return tostring(a)
+    end
     if a ~= nil then return tostring(a) end
     return "?"
   end
@@ -380,69 +607,52 @@ return function(mod)
   function Screen:preview(key)
     local mon = self.mon
     local level = tonumber(mon.level) or 5
-    local base = baseStatOf(self.def, key)
+    local base = nativeBaseStat(mon and mon.species, key)
     if base then
       return gen3Stat(base, self.ivs[key] or 0, self.evs[key] or 0,
         level, self.nature, key, key == "hp")
     end
     return statOf(mon.stats, key)
   end
-  local function moveEntryName(entry)
-    if type(entry) == "string" then return entry end
-    if type(entry) == "table" then
-      for _, k in ipairs({ "move", "name", "id", "moveId" }) do
-        if type(entry[k]) == "string" and entry[k] ~= "" then return entry[k] end
-      end
-    end
-    return nil
-  end
   function Screen:buildMoveList()
     self.moveList = {}
     self.moveNote = nil
     local mon = self.mon
-    local spec = mon and ndStatsBySpecies(mon.species) or nil
-    if not (spec and type(spec.movesByMethod) == "table") then
-      self.moveNote = "NO MOVE DATA"
-      return
-    end
-    local byMethod = spec.movesByMethod
-    local pools = nil
-    if self.category == 1 then
-      pools = { byMethod.levelup, byMethod.level_up, byMethod.relearn,
-        byMethod.levelUp }
-    elseif self.category == 2 then
-      pools = { byMethod.egg }
-    else
-      pools = { byMethod.tutor }
-    end
+    local P = g3Pokemon()
     local known = {}
     if mon and type(mon.moves) == "table" then
-      for _, m in ipairs(mon.moves) do
-        local n = slotMoveName(m)
-        if n then known[n] = true end
+      for i = 1, 4 do
+        local id = nil
+        if P and type(P.moveIdAt) == "function" then
+          local ok, v = pcall(P.moveIdAt, mon, i)
+          if ok then id = tonumber(v) end
+        else
+          local m = mon.moves[i]
+          if type(m) == "number" then id = m
+          elseif type(m) == "table" then id = tonumber(m.id or m.move or m.moveId) end
+        end
+        if id and id > 0 then known[id] = true end
       end
     end
-    local seen = {}
-    for _, pool in ipairs(pools) do
-      if type(pool) == "table" then
-        for _, entry in ipairs(pool) do
-          local n = moveEntryName(entry)
-          if n then
-            local up = string.upper(n)
-            if not known[up] and not seen[up] then
-              seen[up] = true
-              self.moveList[#self.moveList + 1] = n
-            end
-          end
+    local level = tonumber(mon and mon.level) or 5
+    local cats = { "relearn", "tm", "egg", "tutor" }
+    local pools = nativeMovePools(mon)
+    local want = pools[cats[self.category] or "relearn"] or {}
+    for _, e in ipairs(want) do
+      if e.level == nil or e.level <= level then
+        if not known[e.id] then
+          known[e.id] = true
+          self.moveList[#self.moveList + 1] = e
         end
       end
     end
-    table.sort(self.moveList)
+    table.sort(self.moveList, function(a, b) return a.name < b.name end)
+    if #self.moveList == 0 then self.moveNote = "NO MOVE DATA" end
     if self.moveIndex > #self.moveList then
       self.moveIndex = math.max(1, #self.moveList)
     end
   end
-  function Screen:commit()
+    function Screen:commit()
     local mon = self.mon
     if type(mon) ~= "table" then
       self.status = "NO POKEMON"
@@ -473,6 +683,12 @@ return function(mod)
     local parity = nil
     if tonumber(mon.personality) then parity = tonumber(mon.personality) % 2 end
     gen3SetPersonality(mon, wantNature, self.gender, parity)
+    if self.abilityIdx ~= self.baseAbilityIdx then
+      local picked = self.abilities[self.abilityIdx]
+      if picked == nil or tonumber(picked) == 0 then
+        self.abilityIdx = self.baseAbilityIdx
+      end
+    end
     if self.abilityIdx ~= self.baseAbilityIdx then
       local P = g3Pokemon()
       local pair = nil
@@ -510,35 +726,42 @@ return function(mod)
     gen3Committed[mon] = true
     self.status = "TRAINING COMPLETE"
   end
+  function Screen:moveCost()
+    if self.category == 1 then return 0 end
+    return MOVE_COST
+  end
   function Screen:learnMove(slot)
     local mon = self.mon
-    local name = self.pending and self.pending.name
-    if type(mon) ~= "table" or type(name) ~= "string" then
+    local moveId = tonumber(self.pending and self.pending.id)
+    if type(mon) ~= "table" or not moveId then
       self.status = "NO MOVE"
       return
     end
-    local numId = gen3MoveIdByName(name)
-    if not numId then
+    local name = self.pending.name or gen3MoveName(moveId) or ("MOVE " .. moveId)
+    if not gen3MoveName(moveId) then
       self.status = "MOVE NOT IN ROM DATA"
       return
     end
     local save = liveSave()
-    if moneyOf(save) < MOVE_COST then
+    local teachCost = self:moveCost()
+    if moneyOf(save) < teachCost then
       self.status = "NOT ENOUGH MONEY"
       return
     end
     mon.moves = mon.moves or {}
-    local pp = gen3MovePp(numId)
-    mon.moves[slot] = { moveId = numId, pp = pp }
-    if type(mon.pp) == "table" then mon.pp[slot] = pp end
-    if type(mon.maxPp) == "table" then mon.maxPp[slot] = pp end
-    setMoney(save, moneyOf(save) - MOVE_COST)
+    local pp = gen3MovePp(moveId)
+    mon.moves[slot] = moveId
+    if type(mon.pp) ~= "table" then mon.pp = {} end
+    if type(mon.maxPp) ~= "table" then mon.maxPp = {} end
+    mon.pp[slot] = pp
+    mon.maxPp[slot] = pp
+    setMoney(save, moneyOf(save) - teachCost)
     self.pending = nil
     self.pickingSlot = false
     self.status = "LEARNED " .. string.upper(name)
     self:buildMoveList()
   end
-  local BTN_IV = { "+", "-", "0", "31" }
+    local BTN_IV = { "+", "-", "0", "31" }
   local BTN_EV = { "0", "252", "+128", "+64", "+32", "+16", "+4" }
   function Screen:buttons()
     if self.page == TAB_EV then return BTN_EV end
@@ -596,6 +819,14 @@ return function(mod)
       return
     end
     self.abilityIdx = ((self.abilityIdx - 1 + dir) % #self.abilities) + 1
+    local cur = self.abilities[self.abilityIdx]
+    if cur == nil or tonumber(cur) == 0 then
+      self.status = "NO SECONDARY ABILITY"
+      self.abilityWarnT = 1.0
+    elseif self.status == "NO SECONDARY ABILITY" then
+      self.status = ""
+      self.abilityWarnT = nil
+    end
   end
   function Screen:updateStats(input)
     local function pressed(k)
@@ -652,28 +883,9 @@ return function(mod)
       return
     end
     if pressed("up") then
-      if self.page == TAB_IV or self.page == TAB_EV then
-        self.focus = "rows"
-        self.row = #STAT_ORDER
-      else
-        self.focus = "tabs"
-      end
+      self.focus = "tabs"
     elseif pressed("down") then
       self.focus = "tabs"
-    elseif pressed("left") then
-      if self.page == TAB_NAT then self:cycleNature(-1)
-      elseif self.page == TAB_GENDER then self:cycleGender()
-      elseif self.page == TAB_ABILITY then self:cycleAbility(-1)
-      elseif self.page == TAB_HIDDEN then
-        self.status = "HIDDEN ABILITY IS A STUB IN THIS PORT"
-      end
-    elseif pressed("right") then
-      if self.page == TAB_NAT then self:cycleNature(1)
-      elseif self.page == TAB_GENDER then self:cycleGender()
-      elseif self.page == TAB_ABILITY then self:cycleAbility(1)
-      elseif self.page == TAB_HIDDEN then
-        self.status = "HIDDEN ABILITY IS A STUB IN THIS PORT"
-      end
     elseif pressed("a") then
       self:commit()
     elseif pressed("b") then
@@ -686,13 +898,13 @@ return function(mod)
         and input:wasPressed(k)
     end
     if pressed("left") then
-      self.category = ((self.category - 2) % 3) + 1
+      self.category = ((self.category - 2) % 4) + 1
       self.moveIndex = 1
       self:buildMoveList()
       return
     end
     if pressed("right") then
-      self.category = (self.category % 3) + 1
+      self.category = (self.category % 4) + 1
       self.moveIndex = 1
       self:buildMoveList()
       return
@@ -706,12 +918,12 @@ return function(mod)
       return
     end
     if pressed("a") then
-      local name = self.moveList[self.moveIndex]
-      if not name then
+      local e = self.moveList[self.moveIndex]
+      if not e then
         self.status = self.moveNote or "NO MOVES"
         return
       end
-      self.pending = { kind = "move", name = name }
+      self.pending = { kind = "move", id = e.id, name = e.name }
       return
     end
     if pressed("b") then
@@ -720,24 +932,38 @@ return function(mod)
       self.pickingSlot = false
     end
   end
+  function Screen:moveSlotCount()
+    local mon = self.mon
+    local P = g3Pokemon()
+    local n = 0
+    for i = 1, 4 do
+      local id = nil
+      if P and type(P.moveIdAt) == "function" then
+        local ok, v = pcall(P.moveIdAt, mon, i)
+        if ok then id = tonumber(v) end
+      elseif mon and type(mon.moves) == "table" then
+        local m = mon.moves[i]
+        if type(m) == "number" then id = m
+        elseif type(m) == "table" then
+          id = tonumber(m.id or m.move or m.moveId)
+        end
+      end
+      if id and id > 0 then n = n + 1 end
+    end
+    return n
+  end
   function Screen:updateSlotPicker(input)
     local function pressed(k)
       return input and type(input.wasPressed) == "function"
         and input:wasPressed(k)
     end
-    local count = #(self.mon.moves or {})
+    local count = self:moveSlotCount()
     if count < 1 then count = 1 end
     if pressed("up") then
       self.slotIndex = math.max(1, self.slotIndex - 1)
     elseif pressed("down") then
       self.slotIndex = math.min(math.max(count, 1), self.slotIndex + 1)
     elseif pressed("a") then
-      local cur = self.mon.moves and self.mon.moves[self.slotIndex]
-      local curName = slotMoveName(cur)
-      if curName and HM_MOVES[curName] then
-        self.status = "HM MOVES CANNOT BE FORGOTTEN"
-        return
-      end
       self:learnMove(self.slotIndex)
     elseif pressed("b") then
       self.pickingSlot = false
@@ -750,26 +976,25 @@ return function(mod)
         and input:wasPressed(k)
     end
     if pressed("a") then
-      local mon = self.mon
-      local full = mon and type(mon.moves) == "table" and #mon.moves >= 4
-      if full then
+      local n = self:moveSlotCount()
+      if n >= 4 then
         self.pickingSlot = true
         self.slotIndex = 1
       else
-        local slot = mon and type(mon.moves) == "table" and (#mon.moves + 1) or 1
-        if slot > 4 then slot = 4 end
+        local slot = math.min(math.max(n + 1, 1), 4)
         self:learnMove(slot)
       end
     elseif pressed("b") then
       self.pending = nil
+      self.pickingSlot = false
     end
   end
   function Screen:update(dt)
     local input = self.game and self.game.input
     if not input then return end
     local ok, err = pcall(function()
-      if self.pending then self:updateConfirm(input) return end
       if self.pickingSlot then self:updateSlotPicker(input) return end
+      if self.pending then self:updateConfirm(input) return end
       if self.mode == "moves" then self:updateMoves(input)
       else self:updateStats(input) end
     end)
@@ -781,39 +1006,63 @@ return function(mod)
     self.game.input = nil
   end
   function Screen:drawTabs(focused)
-    local x = 5
+    local total = 0
+    for i, w in ipairs(TAB_WIDTHS) do total = total + w end
+    total = total + (#TAB_WIDTHS - 1)
+    local x = 5 + math.floor((230 - total) / 2 + 0.5)
     for i, label in ipairs(TAB_LABELS) do
       local w = TAB_WIDTHS[i]
-      if self.page == i then
-        local G = love.graphics
-        G.setColor(0.55, 0.70, 0.95, 1)
-        G.rectangle("fill", SX(x), SX(19), SX(w), SX(14))
-        G.setColor(0, 0, 0, 1)
+      if self.page == i and self.focus ~= "apply" then
+        selectBox(x, 18, w, 14, C_CREAM)
+      else
+        boxR(x, 18, w, 14, C_CREAM, C_NAVY)
       end
-      local lvl = 1
-      if self.page == i then lvl = 2 end
-      frame(x, 19, w, 14, lvl)
-      tprint(label, x + 3, 21)
+      tprint(label, cx(x, w, label), cy(18, 14) - 1)
       x = x + w + 1
     end
   end
   function Screen:drawTable()
-    tprint("STAT", 17, 35)
-    tprint("IV", 62, 35)
-    tprint("EV", 104, 35)
-    tprint("VAL", 152, 35)
-    local y = 48
+    local TX = 14
+    fillR(TX, 34, 211, 13, C_HDRBLUE)
+    wprint("STATS", TX + 12, cy(34, 13) - 2)
+    wprint("IV", TX + 57, cy(34, 13) - 2)
+    wprint("EV", TX + 99, cy(34, 13) - 2)
+    wprint("VALUE", TX + 147, cy(34, 13) - 2)
+    local topY = 48
+    local blockH = #STAT_ORDER * 13
+    fillR(TX, topY, 211, blockH, C_CREAM, 3)
+    fillR(TX, topY, 52, blockH, C_STATLBL, 3)
+    fillR(TX + 52, topY, 1, blockH, C_NAVY)
+    fillR(TX + 94, topY, 1, blockH, C_NAVY)
+    fillR(TX + 136, topY, 1, blockH, C_NAVY)
+    for k = 1, #STAT_ORDER - 1 do
+      fillR(TX, topY + k * 13, 211, 1, C_NAVY)
+    end
+    do
+      local G = love.graphics
+      G.setColor(C_NAVY[1], C_NAVY[2], C_NAVY[3], 1)
+      G.rectangle("line", SX(TX) + 0.5, SX(topY) + 0.5,
+        SX(211), SX(blockH), rrClamp(211, blockH, 3))
+      G.setColor(0, 0, 0, 1)
+    end
+    local y = topY
     for i, key in ipairs(STAT_ORDER) do
-      local lvl = 1
-      if self.focus == "rows" and self.row == i
-          and (self.page == TAB_IV or self.page == TAB_EV) then lvl = 2 end
-      frame(5, y, 211, 12, lvl)
-      if lvl == 2 then cursor(7, y + 3) end
-      tprint(STAT_LABEL[key], 17, y + 1)
-      tprint(tostring(self.ivs[key]), 62, y + 1)
-      tprint(tostring(self.evs[key]), 104, y + 1)
+      local selRow = self.focus == "rows" and self.row == i
+        and (self.page == TAB_IV or self.page == TAB_EV)
+      if selRow then
+        selectBox(TX, y, 211, 12, C_CREAM)
+        fillR(TX, y, 52, 12, C_STATLBL, 3)
+        fillR(TX + 52, y, 1, 12, C_NAVY)
+        fillR(TX + 94, y, 1, 12, C_NAVY)
+        fillR(TX + 136, y, 1, 12, C_NAVY)
+        cursor(TX + 2, y + 3)
+      end
+      local ty = cy(y, 12)
+      tprint(STAT_LABEL[key], TX + 12, ty)
+      tprint(tostring(self.ivs[key]), TX + 57, ty)
+      tprint(tostring(self.evs[key]), TX + 99, ty)
       local v = self:preview(key)
-      tprint(v == nil and "---" or tostring(v), 152, y + 1)
+      tprint(v == nil and "---" or tostring(v), TX + 147, ty)
       y = y + 13
     end
     return y
@@ -823,13 +1072,12 @@ return function(mod)
       local set = self:buttons()
       local bx = 8
       for i, b in ipairs(set) do
-        local lvl = 1
-        if self.focus == "rows" and self.col == i then lvl = 2 end
+        local selB = self.focus == "rows" and self.col == i
         local bw = 54
         if #set > 4 then bw = 31 end
-        frame(bx, y, bw, 13, lvl)
-        if #set > 4 then tprint(b, bx + 3, y + 1)
-        else tprint(b, bx + 22, y + 1) end
+        if selB then selectBox(bx, y, bw, 13, C_CREAM)
+        else boxR(bx, y, bw, 13, C_CREAM, C_NAVY) end
+        tprint(b, cx(bx, bw, b), y - 1)
         bx = bx + bw + 1
       end
       return y + 15
@@ -854,21 +1102,24 @@ return function(mod)
       note = "A: SWAP 5000"
     elseif self.page == TAB_HIDDEN then
       val = "STUB"
-      note = "NOT IN THIS PORT"
+      note = "Future Scope"
     end
-    frame(5, y, 100, 13, 1)
-    tprint(val, 10, y + 1)
-    tprint(note, 112, y + 1)
+    boxR(70, y, 100, 13, C_CREAM, C_NAVY)
+    tprint(val, cx(70, 100, val), y - 1)
+    tprint(note, 177, y - 1)
     return y + 15
   end
   function Screen:drawCostBand(y)
     local msg = self.status ~= "" and self.status
       or ("COST " .. tostring(self:pendingCost()))
-    tprint(msg, 8, y + 1)
-    local lvl = 1
-    if self.focus == "apply" then lvl = 2 end
-    frame(172, y - 1, 63, 14, lvl)
-    tprint("APPLY", 184, y + 1)
+    boxR(5, y - 1, 160, 14, C_WHITE, C_NAVY)
+    tprint(msg, 8, cy(y - 1, 14) - 1)
+    if self.focus == "apply" then
+      selectBox(172, y - 1, 63, 14, C_CREAM)
+    else
+      boxR(172, y - 1, 63, 14, C_CREAM, C_ORANGE)
+    end
+    tprint("APPLY", cx(172, 63, "APPLY"), cy(y - 1, 14) - 1)
     return y + 15
   end
   function Screen:drawStatsPage()
@@ -878,13 +1129,246 @@ return function(mod)
     y = self:drawValueStrip(y + 1)
     self:drawCostBand(y)
   end
+  local moveInfoCache = {}
+  local TYPE_ID_BY_NAME = {
+    NORMAL = 0, FIGHTING = 1, FLYING = 2, POISON = 3, GROUND = 4,
+    ROCK = 5, BUG = 6, GHOST = 7, STEEL = 8, MYSTERY = 9,
+    FIRE = 10, WATER = 11, GRASS = 12, ELECTRIC = 13, PSYCHIC = 14,
+    ICE = 15, DRAGON = 16, DARK = 17,
+  }
+  local GEN3_PHYSICAL = {
+    [0] = true, [1] = true, [2] = true, [3] = true, [4] = true,
+    [5] = true, [6] = true, [7] = true, [8] = true,
+  }
+  local splitClassCache = nil
+  local function splitClass(moveNum)
+    if splitClassCache == nil then
+      splitClassCache = false
+      local ok, body = pcall(mod.read, mod, "battle/damage_split_data.lua")
+      if ok and type(body) == "string" then
+        local okC, chunk = pcall(loadstring, body, "@damage_split_data.lua")
+        if okC and type(chunk) == "function" then
+          local okR, data = pcall(chunk)
+          if okR and type(data) == "table" then splitClassCache = data end
+        end
+      end
+    end
+    if type(splitClassCache) == "table" then return splitClassCache[moveNum] end
+    return nil
+  end
+  local function splitOn()
+    local ok, v = pcall(function() return mod.options:get("damage_split") end)
+    return ok and v == true
+  end
+  local DAMAGING_FX = {
+    OHKO = true, SONICBOOM = true, LOW_KICK = true, COUNTER = true,
+    LEVEL_DAMAGE = true, DRAGON_RAGE = true, BIDE = true, PSYWAVE = true,
+    SUPER_FANG = true, FLAIL = true, RETURN = true, PRESENT = true,
+    FRUSTRATION = true, MAGNITUDE = true, HIDDEN_POWER = true,
+    MIRROR_COAT = true, ENDEAVOR = true,
+  }
+  local FIXED_SPECIAL = {
+    [101] = true, [82] = true, [243] = true, [149] = true,
+    [49] = true, [237] = true,
+  }
+  local FIXED_PHYSICAL_IDS = {
+    [12] = true, [32] = true, [67] = true, [68] = true,
+    [69] = true, [90] = true, [117] = true, [162] = true,
+    [175] = true, [179] = true, [216] = true, [217] = true,
+    [218] = true, [222] = true, [283] = true, [329] = true,
+  }
+  local function moveInfo(moveId, moveName)
+    moveId = tonumber(moveId)
+    if not moveId then return nil end
+    local cacheKey = moveId .. (splitOn() and ":s" or ":v")
+    local hit = moveInfoCache[cacheKey]
+    if hit ~= nil then return hit ~= false and hit or nil end
+    local info = { power = "---", accuracy = "---", pp = "---",
+      typeId = 0, category = "status", desc = nil }
+    local P = g3Pokemon()
+    if P and type(P.battleMove) == "function" then
+      local ok, row = pcall(P.battleMove, moveId)
+      if ok and type(row) == "table" then
+        local power = tonumber(row.power) or 0
+        local acc = tonumber(row.accuracy) or 0
+        info.power = power >= 2 and tostring(power) or "---"
+        info.accuracy = acc > 0 and tostring(acc) or "---"
+        info.pp = tostring(tonumber(row.pp) or "---")
+        local tid = tonumber(row.type)
+        if tid == nil and row.type ~= nil then
+          tid = TYPE_ID_BY_NAME[tostring(row.type):upper()]
+        end
+        info.typeId = tid or 0
+        local fx = type(row.effect) == "string"
+          and string.upper(row.effect) or nil
+        local damaging = power >= 2 or (fx and DAMAGING_FX[fx])
+          or FIXED_PHYSICAL_IDS[moveId] or FIXED_SPECIAL[moveId]
+        if damaging then
+          local cls = splitOn() and splitClass(moveId) or nil
+          if cls ~= "physical" and cls ~= "special" then cls = nil end
+          if not cls and splitOn() and FIXED_SPECIAL[moveId] then
+            cls = "special"
+          end
+          if cls then
+            info.category = cls
+          else
+            info.category = GEN3_PHYSICAL[info.typeId] and "physical" or "special"
+          end
+        end
+      end
+    end
+    do
+      local okS, SummaryData = pcall(require, "src.core.game3.summary_data")
+      if okS and type(SummaryData) == "table"
+          and type(SummaryData.moveDescription) == "function" then
+        local descName = moveName or gen3MoveName(moveId) or ""
+        local okD, desc = pcall(SummaryData.moveDescription, moveId, descName)
+        if okD and type(desc) == "string" and desc ~= "" then
+          info.desc = desc
+        end
+      end
+    end
+    moveInfoCache[cacheKey] = info
+    return info
+  end
+  local TYPE_EN = {
+    "NORMAL", "FIGHTING", "FLYING", "POISON", "GROUND",
+    "ROCK", "BUG", "GHOST", "STEEL", "MYSTERY",
+    "FIRE", "WATER", "GRASS", "ELECTRIC", "PSYCHIC",
+    "ICE", "DRAGON", "DARK",
+  }
+  local TYPE_COLORS = {
+    [0] = { 0.66, 0.66, 0.47 }, [1] = { 0.75, 0.19, 0.16 },
+    [2] = { 0.66, 0.56, 0.94 }, [3] = { 0.63, 0.25, 0.63 },
+    [4] = { 0.88, 0.75, 0.41 }, [5] = { 0.72, 0.63, 0.22 },
+    [6] = { 0.66, 0.72, 0.13 }, [7] = { 0.44, 0.35, 0.60 },
+    [8] = { 0.72, 0.72, 0.82 }, [9] = { 0.41, 0.63, 0.56 },
+    [10] = { 0.94, 0.50, 0.19 }, [11] = { 0.41, 0.56, 0.94 },
+    [12] = { 0.47, 0.78, 0.31 }, [13] = { 0.97, 0.82, 0.19 },
+    [14] = { 0.97, 0.35, 0.53 }, [15] = { 0.60, 0.85, 0.85 },
+    [16] = { 0.44, 0.22, 0.97 }, [17] = { 0.44, 0.35, 0.28 },
+  }
+  local function typeName(tid)
+    tid = tonumber(tid) or 0
+    local okR, RomText = pcall(require, "src.core.game3.rom_text")
+    if okR and RomText and type(RomText.at) == "function" then
+      local okN, n = pcall(RomText.at, "gTypeNames", tid)
+      if okN and type(n) == "string" and n ~= "" then return n end
+    end
+    return TYPE_EN[tid + 1] or "NORMAL"
+  end
+  local function drawTypeLabel(name, tid, x, y)
+    local G = love and love.graphics
+    local text = tostring(name or "NORMAL"):upper()
+    local tw = math.ceil(textW(text)) + 8
+    if tw < 32 then tw = 32 end
+    local bg = TYPE_COLORS[tonumber(tid) or 0] or TYPE_COLORS[0]
+    G.setColor(bg[1], bg[2], bg[3], 1)
+    G.rectangle("fill", x, y, tw, 12, 3)
+    G.setColor(bg[1] * 0.6, bg[2] * 0.6, bg[3] * 0.6, 1)
+    G.rectangle("line", x + 0.5, y + 0.5, tw - 1, 11, 3)
+    wprint(text, cx(x, tw, text), cy(y, 12) - 2)
+    G.setColor(0, 0, 0, 1)
+    return tw
+  end
+  local function drawSplitBadge(cat, x, y)
+    local G = love and love.graphics
+    if not G then return end
+    local w, h = 32, 12
+    local bg = cat == "physical" and { 0.94, 0.42, 0.20 }
+      or cat == "special" and { 0.35, 0.50, 0.90 }
+      or { 0.62, 0.62, 0.45 }
+    G.setColor(bg[1], bg[2], bg[3], 1)
+    G.rectangle("fill", x, y, w, h, 3)
+    G.setColor(bg[1] * 0.6, bg[2] * 0.6, bg[3] * 0.6, 1)
+    G.rectangle("line", x + 0.5, y + 0.5, w - 1, h - 1, 3)
+    local cx, cy = x + w / 2, y + h / 2
+    G.setColor(1, 1, 1, 1)
+    if cat == "physical" then
+      local r = 4
+      G.setLineWidth(2)
+      for k = 0, 2 do
+        local a = k * math.pi / 3
+        G.line(cx - math.cos(a) * r, cy - math.sin(a) * r,
+          cx + math.cos(a) * r, cy + math.sin(a) * r)
+      end
+      G.setLineWidth(1)
+    elseif cat == "special" then
+      G.circle("line", cx, cy, 4.5)
+      G.circle("line", cx, cy, 2.8)
+      G.circle("fill", cx, cy, 1.2)
+    else
+      G.circle("line", cx, cy, 4.2)
+      G.circle("fill", cx + 1.5, cy, 1.6)
+    end
+    G.setColor(0, 0, 0, 1)
+  end
+  local function drawTypeRow(info, x, y)
+    local G = love and love.graphics
+    if not info or not G then
+      tprint("TYPE " .. (info and tostring(info.typeId) or "---"), x, y)
+      return
+    end
+    local tid = tonumber(info.typeId) or 0
+    local labelW = 26
+    if Frlg and type(Frlg.measure) == "function" then
+      local okM, w = pcall(Frlg.measure, "TYPE ", { small = true })
+      if okM and tonumber(w) then labelW = math.ceil(tonumber(w)) end
+    end
+    tprint("TYPE ", x, cy(SX(y - 1), 12))
+    local bx, by = SX(x + labelW), SX(y - 1)
+    local typeW = 32
+    local drewNative = false
+    local okS, Chrome = pcall(require, "src.ui.game3.summary_chrome")
+    if okS and Chrome and type(Chrome.drawTypeBadge) == "function" then
+      local okI, img = pcall(Chrome.menuInfoImage)
+      if okI and img ~= nil then
+        drewNative = pcall(Chrome.drawTypeBadge, tid, bx, by) and true or false
+      end
+    end
+    if not drewNative then
+      typeW = drawTypeLabel(typeName(tid), tid, bx, by)
+    end
+    drawSplitBadge(info.category, bx + typeW + 4, by)
+  end
+  local function drawWrapped(text, x, y, maxChars, maxRows)
+    local rows = 0
+    local words = {} 
+    for w in string.gmatch(tostring(text or ""), "%S+") do
+      words[#words + 1] = w
+    end
+    local line = ""
+    local function flush()
+      if line ~= "" and rows < maxRows then
+        tprint(line, x, y + rows * 10)
+        rows = rows + 1
+      end
+      line = ""
+    end
+    for _, w in ipairs(words) do
+      local trial = line == "" and w or (line .. " " .. w)
+      if #trial > maxChars then
+        flush()
+        line = w
+      else
+        line = trial
+      end
+    end
+    flush()
+    return rows
+  end
   function Screen:drawMovesPage()
-    frame(5, 3, 230, 15, 1)
-    tprint("MOVES " .. MOVE_FIELD_LABELS[self.category], 10, 5)
-    tprint("5000", 200, 5)
-    local top = 21
+    local mon = self.mon
+    local title = gen3SpeciesName(mon) .. " Lv" .. tostring(mon.level or "?")
+    fillR(5, 3, 230, 14, C_MAGENTA, 3)
+    wprint(title .. " " .. MOVE_FIELD_LABELS[self.category], 9, 2)
+    pageDots(#MOVE_FIELD_LABELS, self.category, 7)
+    local top = 19
     local pitch = 13
     local visible = 9
+    local listW = 118
+    local infoX = 128
+    boxR(5, top, listW, 122, C_CREAM, C_PANELBLUE)
     if self.moveNote and #self.moveList == 0 then
       tprint(self.moveNote, 12, top + 2)
     end
@@ -894,25 +1378,42 @@ return function(mod)
     end
     for r = 1, visible do
       local i = off + r
-      local name = self.moveList[i]
+      local entry = self.moveList[i]
+      local name = entry and entry.name
       if name then
-        local col = 0
         local yy = top + (r - 1) * pitch
-        if r > 5 then col = 1 yy = top + (r - 6) * pitch end
-        local x = 12 + col * 112
-        tprint(string.upper(name), x + 9, yy)
-        if i == self.moveIndex then cursor(x, yy + 3) end
+        tprint(string.upper(name), 21, yy)
+        if i == self.moveIndex then cursor(12, yy + 3) end
       end
     end
-    tprint("A BUY B BACK", 8, 147)
-    if self.status ~= "" then tprint(self.status, 100, 147) end
-    if self.pending then
-      frame(35, 45, 170, 62, 2)
-      tprint("TEACH " .. string.upper(self.pending.name or "?"), 45, 53)
-      tprint("FOR 5000?", 45, 67)
-      tprint("A YES B NO", 45, 87)
-    elseif self.pickingSlot then
-      frame(35, 30, 170, 112, 2)
+    do
+      local sel = self.moveList[self.moveIndex]
+      boxR(infoX, top, 107, 122, C_CREAM, C_PANELBLUE)
+      if sel then
+        local info = moveInfo(sel.id, sel.name)
+        fillR(infoX + 3, top + 2, 101, 12, C_MAGENTA)
+        wprint(string.upper(sel.name or "?"), infoX + 6, cy(top + 2, 12) - 2)
+        drawTypeRow(info, infoX + 5, top + 16)
+        tprint("POW " .. (info and info.power or "---"), infoX + 5, top + 28)
+        tprint("ACC " .. (info and info.accuracy or "---"), infoX + 5, top + 40)
+        tprint("PP " .. (info and info.pp or "---"), infoX + 5, top + 52)
+        if info and info.desc then
+          boxR(infoX + 4, top + 64, 99, 54, C_WHITE, C_NAVY)
+          drawWrapped(info.desc, infoX + 7, top + 66, 15, 5)
+        end
+      else
+        tprint("NO MOVE", infoX + 5, top + 2)
+      end
+    end
+    boxR(5, 142, 230, 13, C_WHITE, C_NAVY, 3)
+    tprint("A LEARN B BACK", 8, cy(142, 13))
+    do
+      local cost = self:moveCost()
+      tprint(cost > 0 and tostring(cost) or "FREE", 200, cy(142, 13))
+    end
+    if self.status ~= "" then tprint(self.status, 100, cy(142, 13)) end
+    if self.pickingSlot then
+      boxR(35, 30, 170, 112, C_CREAM, C_NAVY, 4)
       tprint("FORGET WHICH?", 45, 36)
       local moves = (self.mon and self.mon.moves) or {}
       for i = 1, math.max(#moves, 1) do
@@ -921,6 +1422,12 @@ return function(mod)
         if i == self.slotIndex then cursor(43, 36 + i * 13 + 3) end
       end
       tprint("A OK B CANCEL", 45, 128)
+    elseif self.pending then
+      boxR(35, 45, 170, 62, C_CREAM, C_NAVY, 4)
+      tprint("TEACH " .. string.upper(self.pending.name or "?"), 45, 53)
+      local dialogCost = self:moveCost()
+      tprint(dialogCost > 0 and ("FOR " .. tostring(dialogCost) .. "?") or "FOR FREE?", 45, 67)
+      tprint("A YES B NO", 45, 87)
     end
   end
   function Screen:panelSize()
@@ -930,21 +1437,41 @@ return function(mod)
     local ok, err = pcall(function()
       local G = love.graphics
       G.push("all")
-      G.setColor(0.96, 0.93, 0.82, 1)
-      G.rectangle("fill", 0, 0, STATS_W, STATS_H)
-      G.setColor(0, 0, 0, 1)
-      drawBorder(STATS_W, STATS_H)
-      local mon = self.mon
-      local title = gen3SpeciesName(mon) .. " Lv" .. tostring(mon.level or "?")
-      frame(5, 3, 230, 14, 1)
-      tprint(title, 9, 4)
-      if self.mode == "moves" then self:drawMovesPage()
-      else self:drawStatsPage() end
+      local okInner, errInner = pcall(function()
+        stripeBg(STATS_W, STATS_H)
+        drawBorder(STATS_W, STATS_H)
+        local function part(name, fn)
+          local okP, errP = pcall(fn)
+          if not okP then
+            pcall(mod.log.warn, mod.log,
+              "pokemon-trainer: TRAIN draw section '%s' failed: %s",
+              tostring(name), tostring(errP))
+          end
+        end
+        if self.mode == "moves" then
+          part("moves", function() self:drawMovesPage() end)
+        else
+          part("title", function()
+            local mon = self.mon
+            local title = gen3SpeciesName(mon) .. " Lv"
+              .. tostring(mon.level or "?")
+            fillR(5, 3, 230, 14, C_MAGENTA, 3)
+            wprint(title, 9, 2)
+          end)
+          part("tabs", function() self:drawTabs(self.focus == "tabs") end)
+          part("table", function() self:drawTable() end)
+          part("values", function()
+            local y = 48 + #STAT_ORDER * 13 + 1
+            y = self:drawValueStrip(y)
+            self:drawCostBand(y)
+          end)
+        end
+      end)
       G.pop()
       G.setColor(1, 1, 1, 1)
+      if not okInner then error(errInner, 0) end
     end)
     if not ok then
-      self.broken = true
       pcall(mod.log.warn, mod.log, "pokemon-trainer: TRAIN draw failed: %s",
         tostring(err))
     end
@@ -967,6 +1494,16 @@ return function(mod)
       function TrainG3.update(dt)
         local scr = screenRef.current
         if not scr then return end
+        if scr.abilityWarnT and scr.abilityWarnT > 0 then
+          local step = tonumber(dt) or 0
+          if step <= 0 then step = 1 / 60 end
+          scr.abilityWarnT = scr.abilityWarnT - step
+          if scr.abilityWarnT <= 0 then
+            scr.abilityWarnT = nil
+            scr.abilityIdx = 1
+            if scr.status == "NO SECONDARY ABILITY" then scr.status = "" end
+          end
+        end
         scr.game.input = nil
         scr:update(dt)
         if scr.broken then
@@ -1091,21 +1628,6 @@ return function(mod)
         if fam == nil then return true end
         return fam == "frlg" or fam == "rse" or fam == "emerald"
       end
-      local function engineOwnsTrain()
-        local f = mod.find and mod.find("g9-battle-engine")
-        if not (f and f.options and type(f.options.get) == "function") then
-          return false
-        end
-        local ok, v = pcall(f.options.get, "train_screen")
-        if not (ok and v == "true") then return false end
-        local okP, Profile = pcall(require, "src.core.game3.profile")
-        if okP and type(Profile) == "table"
-            and type(Profile.family) == "function" then
-          local okF, fam = pcall(Profile.family, PM._session)
-          if okF and fam == "frlg" then return true end
-        end
-        return false
-      end
       local function openGen3Train()
         local mon = PM._party and PM._party[PM.cursor]
         if type(mon) ~= "table" or mon.isEgg then return end
@@ -1179,7 +1701,6 @@ return function(mod)
           return
         end
         if not trainAllowedSession() then strip() return end
-        if engineOwnsTrain() then strip() return end
         if fieldList(acts) then
           if PM._previousMode == "battle_switch" then strip() return end
           local mon = PM._party and PM._party[PM.cursor]
