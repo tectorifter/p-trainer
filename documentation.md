@@ -69,8 +69,24 @@ HIDDEN ability: the tab reports that hidden abilities are not in this port
 and changes nothing. Ability slots resolve from the native
 `src.core.game3.pokemon.abilities` pair.
 
-## Enemy evolutions
+## Flat 4 EVs
 
+`4 EVS` (default OFF) wraps the native `Pokemon.gainEVs`: any stat that
+would gain EVs from a KO instead gains exactly 4 (Macho Brace holders
+gain 8, Pokerus doubles where the mon tracks it), clamped to 252 per
+stat and the side's EV total cap. The stat categories stay native — an
+Attack-yielder still gives Attack. Applies to battlers and bench (Exp.
+Share) alike, both sides.
+
+## Macho Brace in Oldale
+
+`MACHO BRACE` (default OFF) wraps the native shop UI's `show`: when the
+Oldale clerk's stock list passes through, MACHO BRACE is appended (the ROM
+stock pointer itself is not patchable, so the shelf is extended live at the
+Shop NPC instead). The item is priced at 2500 via an `items` patch at load.
+Turning OFF restores the vanilla list immediately.
+
+## Enemy evolutions
 `ENEMY EVO` (default OFF) evolves enemy trainer mons at battle start
 (first battles and rematches alike: foe parties are rebuilt fresh per
 battle) via the native `Evolution.apply` (species, ability, stats,

@@ -66,4 +66,18 @@ return {
     default = false,
     description = "ON: enemy trainer mons evolve when their level allows it (level evos at level; trade/happiness 25, or 40 for final evos of 3-stage lines; stones 35). OFF: vanilla.",
   },
+  {
+    key = "ev_4",
+    label = "4 EVS",
+    type = "toggle",
+    default = false,
+    description = "ON: every defeated mon yields 4 EVs in its native stat(s) instead of its ROM yield (Macho Brace doubles to 8). OFF: vanilla yields.",
+  },
+  {
+    key = "macho_brace",
+    label = "MACHO BRACE",
+    type = "toggle",
+    default = false,
+    description = "ON: the Oldale Town mart clerk sells MACHO BRACE for 2500. OFF: vanilla stock.",
+  },
 }
