@@ -48,12 +48,17 @@ Emerald/RSE field party menus.
 - (50%), VERY HARD (75%), HELL (100% = 31 IV and a full EV spread). The EV
 - share of the raised budget follows `1512 EVS`: HELL with NPC/BOTH cover is
 - 252 in every stat. Wild battles are skipped.
+<<<<<<< HEAD
 - `ENEMY EVO` (default OFF): enemy trainer mons evolve when their level
 - allows it. Level evos at their level; trade/happiness at 25 (40 for final
 - evos of 3-stage lines); stones and Feebas at 35; Wurmple random at 7;
 - Eevee/Tyrogue random at 25+; Nincada 20-24 Ninjask, 25+ random
 - Ninjask/Shedinja; Slowpoke Slowking at 25, either at 37. Eggs, wilds and
 - Everstone holders are skipped; moves are kept.
+=======
+- `DMG SPLIT` (default OFF): gen 4 damage split per move damage category
+- (Physical, Special), instead of it being decided by move's type (fire, water...)
+>>>>>>> fd2f62697012c3097ca6c3c9f99a233cb59fc351
 
 ## Layout
 
