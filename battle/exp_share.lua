@@ -61,6 +61,14 @@ return function(mod)
     local ok, fx = pcall(H.effectOf, mon.item or mon.heldItem)
     return ok and fx == H.HOLD.EXP_SHARE
   end
+  local function getterId(battle, pi)
+    if not (type(battle) == "table" and battle.double) then return 0 end
+    local b2 = type(battle.battlers) == "table" and battle.battlers[2] or nil
+    local absent = battle.absent or {}
+    if b2 and b2.partyIndex == pi and not absent[2] then return 2 end
+    if not absent[0] then return 0 end
+    return 2
+  end
   local function foeSpeciesOf(loser)
     if type(loser) ~= "table" then return nil end
     if loser.species ~= nil then return loser.species end
@@ -116,10 +124,25 @@ return function(mod)
     return battler, math.max(1, math.floor(half / math.max(1, H)))
   end
   local paid = setmetatable({}, { __mode = "k" })
+  local applyLogged = false
+  local DEBUG = false
+  local shareBudget = 100
+  local function shareLog(...)
+    if not DEBUG then return end
+    if shareBudget <= 0 then return end
+    shareBudget = shareBudget - 1
+    mod.log:warn("pokemon-trainer: SHARE " .. string.format(...))
+  end
   mod.hooks:wrap("exp.gain", function(nextFn, ctx)
     local m = mode()
     if m == "off" then return nextFn(ctx) end
     if type(ctx) ~= "table" or type(ctx.mon) ~= "table" then return nextFn(ctx) end
+    -- OVERRIDE INVARIANT (setting on): exactly one EXP + one EV payment per
+    -- mon per KO. Native recipients (sent-in + item holders) are paid by the
+    -- native path but with OUR replaced amount below, so holders get no
+    -- vanilla bonus. Every other alive mon is paid once by the bench loop,
+    -- which skips holders precisely because the native path already pays them.
+    -- All EV top-ups are want-based (idempotent), never additive.
     local battle = ctx.battle
     local loser = ctx.loser
     local party = partyOf(battle)
@@ -134,8 +157,16 @@ return function(mod)
       end
     end
     local battlerAmt, benchAmt = sharesFor(m, full, n, H, P)
+    local holders = 0
+    for i = 1, 6 do
+      if aliveMon(party[i]) and not sentIn[i] and isHolder(party[i]) then
+        holders = holders + 1
+      end
+    end
     if not paid[loser or false] then
       paid[loser or false] = true
+      shareLog("mode=%s sent=%d bench=%d holders=%d bAmt=%d sAmt=%d",
+        m, n, H, holders, battlerAmt, benchAmt)
       pcall(function()
         local E = ExpMod()
         local Pkm = PokeMod()
@@ -155,6 +186,14 @@ return function(mod)
             end
             local okA, result = pcall(E.apply, mon, amount)
             if okA and type(result) == "table" then
+              if DEBUG and not applyLogged then
+                applyLogged = true
+                pcall(function()
+                  mod.log:warn("pokemon-trainer: APPLYRES gained=%s levels=%s",
+                    tostring(result.gained),
+                    tostring(result.levels and #result.levels))
+                end)
+              end
               if Pkm and type(Pkm.adjustFriendship) == "function"
                   and Pkm.FRIENDSHIP_EVENT_GROW_LEVEL ~= nil then
                 local fctx = {}
@@ -171,7 +210,22 @@ return function(mod)
               pcall(mod.events.emit, mod.events, "battle.exp_gained", {
                 battle = battle, mon = mon,
                 gained = result.gained or amount, levels = result.levels,
+                index = i, battler = nil, battlerId = getterId(battle, i),
               })
+              local bp = mod.exports.ptBenchPaid
+              if type(bp) ~= "table" then bp = {} mod.exports.ptBenchPaid = bp end
+              bp[#bp + 1] = {
+                mon = mon, partyIndex = i, amount = amount,
+                boosted = per.traded and true or false, result = result,
+                battlerId = getterId(battle, i),
+              }
+              local eTot = 0
+              if type(mon.evs) == "table" then
+                for _, k in ipairs({ "hp", "atk", "def", "spa", "spd", "spe" }) do
+                  eTot = eTot + (tonumber(mon.evs[k]) or 0)
+                end
+              end
+              shareLog("paid slot=%d amt=%d evTot=%d", i, amount, eTot)
             end
           end
         end
@@ -186,6 +240,7 @@ return function(mod)
   end, 0)
   mod.events:on("battle.ended", function()
     for k in pairs(paid) do paid[k] = nil end
+    mod.exports.ptBenchPaid = {}
   end, -1000)
   mod.log:info("pokemon-trainer: exp share installed (off/gen1/gen2/gen3/gen6)")
 end

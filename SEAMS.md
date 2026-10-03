@@ -6,7 +6,7 @@ If your mod touches the same seam, check the Conflict column.
 | Field | Value |
 |---|---|
 | Mod id | `pokemon-trainer` |
-| Version | `0.4.9` |
+| Version | `0.4.25` |
 | Load priority | 95 |
 | Permission | `engine_internals` |
 | Optional dependency | `national_dex` |
@@ -17,6 +17,7 @@ All boots are `pcall`-guarded. Every wrapper calls through to the native functio
 
 1. Chain `Bridge.start`. Never replace it.
 2. Do not assume `exp.gain` `ctx.amount` is vanilla, or that only `ctx.mon` gains EXP/EVs.
+2b. When the `exp_share` setting is gen1/gen2/gen3/gen6, it overrides the native held-item Exp Share: holders are paid through the native recipient path but with the setting's replaced amount (bench share, or battler share if sent in) — never the vanilla holder bonus, never twice. Bench non-holders are paid once directly. Do not add your own holder bonus on top.
 3. Do not assume `next` runs in a `world.talk` wrap.
 4. Do not restore or clear `mon.item`/`heldItem` on battle end.
 5. Do not overwrite `mon.ivs`/`mon.evs` wholesale after `battle.started`.
@@ -37,7 +38,8 @@ Prefer the [public surface](#public-surface) over patching the same seam.
 | `battle.started` | default | `train/train_screen.lua` | Re-runs `applyStats` on mons edited in TRAIN | none |
 | `battle.started` | default | `main.lua` (npc_stamp) | Sets `mon.ptEvCap1512 = true` on enemy mons when `1512 EVS` covers NPCs | Overwriting `ivs`/`evs` without honoring the stamp |
 | `battle.ended` | -1000 | `battle/item_reuse.lua` | Refills consumed/lost held items (empty slots only) | Restoring/clearing `item`/`heldItem` yourself |
-| `battle.ended` | -1000 | `battle/exp_share.lua` | Clears per-KO award bookkeeping | none |
+| `battle.ended` | -1000 | `battle/exp_share.lua` | Clears per-KO award bookkeeping + `ptBenchPaid` | none |
+| `battle.ended` | default | `battle/ev_4.lua` | Re-asserts recorded EV clones onto the session party (post-award sync guard) | none |
 
 The 900-priority entries and the `enemy_evo` entry are fallbacks. The primary path is the `Bridge.start` wrap (section 3).
 
@@ -45,7 +47,7 @@ The 900-priority entries and the `enemy_evo` entry are fallbacks. The primary pa
 
 | Hook | Prio | File | Effect | Conflict |
 |---|---|---|---|---|
-| `exp.gain` | 0 | `battle/exp_share.lua` | Replaces returned amount with GEN1/2/3/6 party-share split. Pays benched mons via `Experience.apply` + `Pokemon.gainEVs`. Emits `battle.exp_gained` per bench mon | Assuming `ctx.amount` is vanilla; assuming only `ctx.mon` gains |
+| `exp.gain` | 0 | `battle/exp_share.lua` | Replaces returned amount with GEN1/2/3/6 party-share split (single `exp.gain` wrap; holders get the setting share, no vanilla bonus). Pays benched non-holders once each via `Experience.apply` + `Pokemon.gainEVs`, records them in `mod.exports.ptBenchPaid`. Emits native-shaped `battle.exp_gained` (with `index`/`battlerId`) per bench mon | Assuming `ctx.amount` is vanilla; assuming only `ctx.mon` gains; paying holders a second share |
 | `battle.damage` | default | `battle/damage_split.lua` | Swaps the attack/defense stat pair for moves whose gen 4 class differs from their gen 3 type class; re-attributes burn, screens, Choice Band/Hustle/Guts, Marvel Scale, Counter/Mirror Coat | Assuming the gen 3 type split; replacing the formula without chaining |
 | `world.talk` | 0 | `overworld/rematch.lua` | REMATCHES on + beaten trainer: shows "Battle again?". YES clears defeat flag, re-runs trainer script, returns `true` (talk consumed). NO unfreezes | Assuming `next` always runs; managing defeat flags around talking |
 
@@ -77,11 +79,19 @@ A further wrapper is safe if it calls the previous `Bridge.start`. Replacing it 
 
 | Guard flag | File | Mutation |
 |---|---|---|
-| `P.__ptEv4Wrapped` | `battle/ev_4.lua` | 4 EVS on: snapshots `mon.evs`, calls native, then replaces each gained stat's delta with exactly 4 (x2 Macho Brace holder, x2 Pokerus where tracked), clamped to 252/stat and the side total cap. Stat categories stay native |
+| `P.__ptEv4Wrapped` | `battle/ev_4.lua` | Cap-aware top-up past 510: after native, adds the foe's ROM yield (x2 Macho Brace, x2 Pokerus where tracked) up to 252/stat and the side total cap (510 / 1512). 4 EVS on: replaces each gained stat's delta with exactly 4 (same multipliers/clamps); if native touched nothing and the cap is raised, awards 4 in the foe's native yield stats instead. All top-ups are want-based (idempotent) |
 
-A further wrapper is safe if it calls through. Replacing it without chaining uninstalls flat-4 yields, and ours uninstalls yours.
+A further wrapper is safe if it calls through. Replacing it without chaining uninstalls raised-cap/flat-4 yields, and ours uninstalls yours.
 
-### 3.4 `src.ui.game3.shop_menu.show({session, items, onClose})`
+### 3.4 `src.core.game3.battle.experience.awardFoe(st, foe, opts)`
+
+| Guard flag | File | Mutation |
+|---|---|---|
+| `E.__ptEvAwardWrapped` | `battle/ev_4.lua` | Snapshots award-list mons pre-award, calls native, then applies the same idempotent top-up/flat fallback using the resolved loser species (fainted-foe arg first, `loser`/`enemy` fields as fallback — engine species ids are internal, not national dex). Appends recorded bench payments (`ptBenchPaid`) to the returned recipient list in native entry shape so the engine presents their messages/bars/level-ups. Records EV clones for the `battle.ended` re-assert |
+
+A further wrapper is safe if it calls through and preserves the returned recipient list (the battle presentation reads it).
+
+### 3.5 `src.ui.game3.shop_menu.show({session, items, onClose})`
 
 | Guard flag | File | Mutation |
 |---|---|---|
@@ -114,7 +124,7 @@ A further wrapper is safe if it calls through with the same single table arg.
 
 | Field | Note |
 |---|---|
-| `level`, `hp`, `stats` | `stats` via `Pokemon.applyStats` |
+| `level`, `exp`, `hp`, `stats` | `stats` via `Pokemon.applyStats`; `exp`/`level` via `Experience.apply` (bench shares) |
 | `ivs`, `evs` | |
 | `personality` | Nature/gender retarget |
 | `ability` / `abilityId` / `abilityNum` | |
@@ -145,7 +155,11 @@ Use these instead of patching the same seam.
 | Export | Members |
 |---|---|
 | `mod.exports.pt` | `statOf`, `topOfList`, `playerTop`, `visit`, `visitSides`, `isWild`, `recalc`, `opt`, `g3Pokemon` |
-| `mod.exports` (EV) | `evScope()`, `evTotalCap(scope, side)`, `evTotalCapFor(side)` |
+| `mod.exports` (EV) | `evScope()`, `evTotalCap(scope, side)`, `evTotalCapFor(side)`, `ptBenchPaid` (per-KO bench payment records, consumed by the award wrapper) |
 | Constants | `EV_TOTAL` (510), `EV_TOTAL_1512`, `EV_PER_STAT` (252) |
 
 Options readable live via `mod.options:get(...)`: `ev_1512`, `item_reuse`, `exp_share`, `doubles`, `rematches`, `lv_adapt`, `difficulty`, `damage_split`, `enemy_evo`, `ev_4`, `macho_brace`.
+
+## Diagnostics (off by default)
+
+Battle logging (`EVGAIN` / `SHARE` / `APPLYRES` / `foeprobe` / `sessparty`) is gated behind a `local DEBUG = false` flag at the top of `battle/ev_4.lua` and `battle/exp_share.lua`. Flip one flag to re-enable that file's lines. Boot lines (`mod.log:info`) always print once per load.

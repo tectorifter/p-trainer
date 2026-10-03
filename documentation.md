@@ -15,7 +15,9 @@ IV point 200, EV point 125, nature change 2000, move 5000, ability-slot swap
 252 per stat always. Total 510, or 1512 when `1512 EVS` covers the mon's
 side (NPC = enemy trainers, PLAYER = the player's party, BOTH = everyone).
 TRAIN refuses staged EVs over the cap; battle-start re-applies committed
-mons through the native `Pokemon.applyStats`.
+mons through the native `Pokemon.applyStats`. Battle EV gains honor the
+raised total too: yields the native code would have clamped at 510 are
+topped up to the side's cap (Macho Brace / Pokerus multipliers kept).
 
 ## Seams (all read from the live dev-branch engine source)
 
