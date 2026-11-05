@@ -82,6 +82,13 @@ return function(mod)
       description = "ON: enemy trainer mons evolve when their level allows it (level evos at level; trade/happiness 25, or 40 for final evos of 3-stage lines; stones 35). OFF: vanilla.",
     },
     {
+      key = "gym_teams",
+      label = "GYM TEAMS",
+      type = "toggle",
+      default = false,
+      description = "ON: gym leader and Elite Four teams are filled to 6 with random mons matching their specialty (primary or secondary type). Added mons still evolve when ENEMY EVO is on. Fill and enemy evolutions skip species from gens turned off in poke-ecology (when that mod is present). OFF: vanilla.",
+    },
+    {
       key = "ev_4",
       label = "4 EVS",
       type = "toggle",
@@ -111,7 +118,16 @@ return function(mod)
     return 510
   end
   mod.exports.evTotalCapFor = function(side)
-    return mod.exports.evTotalCap(mod.exports.evScope(), side)
+    local cap = mod.exports.evTotalCap(mod.exports.evScope(), side)
+    if side == "player" and (tonumber(cap) or 510) < 1512 then
+      local okS, sp = pcall(function() return mod.find("safari-plus") end)
+      if okS and type(sp) == "table" and type(sp.exports) == "table"
+          and type(sp.exports.evTotalCap) == "function" then
+        local okC, c = pcall(sp.exports.evTotalCap)
+        if okC and (tonumber(c) or 0) >= 1512 then return 1512 end
+      end
+    end
+    return cap
   end
   boot("shared", function() loadSibling("shared.lua")(mod) end)
   boot("train_screen", function() loadSibling("train/train_screen.lua")(mod) end)
@@ -120,6 +136,7 @@ return function(mod)
   boot("damage_split", function() loadSibling("battle/damage_split.lua")(mod) end)
   boot("doubles", function() loadSibling("battle/doubles.lua")(mod) end)
   boot("enemy_evo", function() loadSibling("battle/enemy_evo.lua")(mod) end)
+  boot("gym_teams", function() loadSibling("battle/gym_teams.lua")(mod) end)
   boot("level_adapt", function() loadSibling("battle/level_adapt.lua")(mod) end)
   boot("difficulty", function() loadSibling("battle/difficulty.lua")(mod) end)
   boot("rematch", function() loadSibling("overworld/rematch.lua")(mod) end)

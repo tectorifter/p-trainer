@@ -1,73 +1,76 @@
 # pokemon-trainer
 
-Standalone Gen 3 (Emerald) TRAIN editor. Adds a TRAIN row to the
-Emerald/RSE field party menus.
+The backstage pass to your own team — plus a mischievous set of
+levers for the whole region. Part TRAIN editor, part battle lab:
+sculpt your party to perfection, then twist Hoenn itself until it
+fights back exactly as hard as you want.
 
-## TRAIN editor
+## TRAIN: your Pokémon, your specs
 
-- Adds TRAIN to the field party menu. Never for eggs or battle-switch menus.
-- Page one edits IVs, EVs, nature and gender; the ABILITY tab swaps ability
-- slot 1/2 for 5000 on commit; the HIDDEN tab is a stub (reports, no-op).
-- Page two (MOVES) teaches from four lists drawn from the game's own data:
-- RELEARN (level-up moves at its level, free), TM, EGG and TUTOR (5000
-- each), with a forget-slot picker; HM slots can be replaced.
-- Option `1512 EVS`: OFF / NPC / PLAYER / BOTH (252 per stat stays; the total
-- cap becomes 1512 for the chosen side). TRAIN enforces it on commit; enemy
-- mons are stamped `ptEvCap1512` at battle start when the scope covers them;
-- `mod.exports.evTotalCap(scope, side)` is the shared rule.
+Open the party menu in the field and there's a new row: TRAIN.
+Never on eggs, never mid-battle — just you and your roster, alone.
 
-## Battle systems (0.2.x)
+- **Page one** edits IVs, EVs, nature and gender, and swaps ability
+  slot 1/2 for 5000 on commit. (The HIDDEN tab is a stub for now —
+  it reports, it doesn't touch.)
+- **Page two (MOVES)** teaches from four lists drawn from the
+  game's own data: RELEARN (level-up moves at its level, free), TM,
+  EGG and TUTOR (5000 each), with a forget-slot picker. Even HM
+  slots can be replaced. Build the moveset the level-up chart
+  always denied you.
+- **1512 EVS** (OFF / NPC / PLAYER / BOTH): shatter the 510 total —
+  252 per stat stays, the ceiling becomes 1512 for whichever side
+  you choose. Safari-plus's matching toggle covers your side too;
+  `mod.exports.evTotalCap(scope, side)` is the single shared rule.
 
-- `DAMAGE SPLIT` (default OFF): damaging moves use their gen 4 physical/special
-- class (52 of 354 change, classes from PokeAPI — see Credits) instead of the gen 3 type-based
-- split. Implemented in the live `battle.damage` hook by swapping the attack/defense
-- stat pair the formula reads; burn, screens, Choice Band/Hustle/Guts and
-- Marvel Scale are re-attributed to the new class, Counter/Mirror Coat bookkeeping
-- follows it too. Struggle, fixed-damage and OHKO moves are untouched.
+## Battle systems: remix Hoenn
 
-- `ITEM REUSE` (default ON): snapshots every roster mon's `item`/`heldItem`
-- at battle start and hands back anything consumed, flung, thieved or knocked
-- off after battle ends. Only empty slots are refilled, so mid-battle gains
-- are kept.
-- `EXP SHARE` (default OFF): OFF / GENERATION 1 / 2 / 3 / 6 with period-accurate party splits,
-- hooked to Gen 3's own `exp.gain` seam. Bench
-- shares are paid directly with EVs and raise `battle.exp_gained`; their
-- level-up presentation follows the vanilla award.
-- `DOUBLES` (default OFF): trainers fielding 2+ Pokemon force the game's own
-- native double battle (`battle_bridge` `double` flag, no custom scene),
-- but only when the player can field two usable mons (otherwise vanilla
-- single). Wild battles are untouched.
-- `REMATCHES` (default OFF): talking to a beaten trainer asks "Battle
-- again?"; YES re-runs that trainer's own native script (intro, battle,
-- defeat line, prize money, flag), NO keeps the after-battle line.
-- `LV ADAPT` (default VANILLA): -5 / +5 / +10 shift trainer teams around
-- your strongest party mon, 0 parks them exactly at it. Each team's own
-- level gaps are kept (levels are recomputed from a per-mon original
-- baseline), wild battles are skipped.
-- `DIFFICULTY` (default VANILLA): EASY (0 IV / 0 EV), NORMAL (25%), HARD
-- (50%), VERY HARD (75%), HELL (100% = 31 IV and a full EV spread). The EV
-- share of the raised budget follows `1512 EVS`: HELL with NPC/BOTH cover is
-- 252 in every stat. Wild battles are skipped.
-- `4 EVS` (default OFF): every defeated mon yields 4 EVs in its native
-- stat(s) instead of its ROM yield; Macho Brace doubles to 8. Caps
-- (252 per stat, side total) still apply.
-- `MACHO BRACE` (default OFF): the Oldale Town mart clerk sells MACHO BRACE
-- for 2500. `ENEMY EVO` (default OFF): enemy trainer mons evolve when their level
-- allows it. Level evos at their level; trade/happiness at 25 (40 for final
-- evos of 3-stage lines); stones and Feebas at 35; Wurmple random at 7;
-- Eevee/Tyrogue random at 25+; Nincada 20-24 Ninjask, 25+ random
-- Ninjask/Shedinja; Slowpoke Slowking at 25, either at 37. Eggs, wilds and
-- Everstone holders are skipped; moves are kept.
+Every one of these is a mod setting, off (or vanilla) by default.
+Flip them and the region reshapes around you:
+
+- **DAMAGE SPLIT** — the gen 4 physical/special split, all 354
+  moves reclassed (52 change hands), burn, screens, Choice Band,
+  Guts and Counter bookkeeping following along. Gen 3's
+  type-dictates-everything days are over.
+- **ITEM REUSE** — your roster's held items come home. Anything
+  consumed, flung, thieved or knocked off mid-battle is handed back
+  afterwards into the slots that stayed empty. Experiment freely.
+- **EXP SHARE** — OFF, or generations 1, 2, 3, 6, each
+  period-accurate, hooked to gen 3's own seam with EVs paid and
+  vanilla level-up presentation.
+- **DOUBLES** — trainers with 2+ Pokémon force the game's own
+  native double battle — but only when you can field two usable
+  mons. Wilds stay single.
+- **REMATCHES** — talk to any beaten trainer and ask for another
+  go: same intro, same battle, same defeat line, same prize money.
+- **LV ADAPT** — shift every trainer team around your strongest
+  mon: -5 / +5 / +10, or 0 to park them exactly at your level. Each
+  team's own level gaps survive the shift. Wilds skip the queue.
+- **DIFFICULTY** — EASY (0 IV / 0 EV) through HELL (full 31s and a
+  complete EV spread, 252 everywhere under 1512 cover). Pick your
+  poison; wilds are exempt.
+- **4 EVS** — every defeated mon yields a flat 4 EVs in its native
+  stat(s) instead of its ROM yield. Macho Brace doubles to 8.
+- **GYM TEAMS** — leaders and the Elite Four fill to 6 with mons of
+  their specialty, staged to the team's level so low-level teams
+  field first stages, never finals — and the ace moves to the last
+  slot, so it is fought last. Follows poke-ecology's GEN toggles
+  when present.
+- **MACHO BRACE** — the Oldale mart clerk sells one for 2500.
+- **ENEMY EVO** — enemy trainer mons evolve when their level allows
+  it (level evos at level; trade/happiness at 25; stones at 35;
+  Wurmple's coin flip at 7...). Everstone holders, eggs and wilds
+  are spared, moves are kept.
 
 ## Layout
 
 - `main.lua` — entry: options, EV-cap exports, boots everything.
-- `options.lua` — the eight option rows (mirrored in main.lua).
 - `shared.lua` — roster walks, side split, wild check, stat recompute.
 - `train/train_screen.lua` — the TRAIN editor + party-menu injection.
 - `battle/item_reuse.lua`, `battle/exp_share.lua`, `battle/doubles.lua`,
 - `battle/level_adapt.lua`, `battle/difficulty.lua` — battle systems.
 - `battle/enemy_evo.lua` — enemy trainer evolution at battle start.
+- `battle/gym_teams.lua` — gym/E4 team fill via the `trainer.party` hook.
 - `overworld/rematch.lua` — the `world.talk` rematch question.
 
 ## Verify

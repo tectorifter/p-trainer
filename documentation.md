@@ -13,7 +13,9 @@ IV point 200, EV point 125, nature change 2000, move 5000, ability-slot swap
 ## EV caps
 
 252 per stat always. Total 510, or 1512 when `1512 EVS` covers the mon's
-side (NPC = enemy trainers, PLAYER = the player's party, BOTH = everyone).
+side (NPC = enemy trainers, PLAYER = the player's party, BOTH = everyone;
+the safari-plus `1512 EVS` toggle also covers the player's party while that
+mod is loaded).
 TRAIN refuses staged EVs over the cap; battle-start re-applies committed
 mons through the native `Pokemon.applyStats`. Battle EV gains honor the
 raised total too: yields the native code would have clamped at 510 are
@@ -21,10 +23,10 @@ topped up to the side's cap (Macho Brace / Pokerus multipliers kept).
 
 ## Seams (all read from the live dev-branch engine source)
 
-- Party row: `src.ui.game3.party_menu` (`PM.ACTIONS` + unused `STORE` id) with
-- the label patched in the RSE scene manifest's `party.cursorOptions[15]`
-- (`Kit.manifest` cache) on Emerald and via `RomText.at sCursorOptions/14`
-- on FRLG.
+- Party row: the `ui.party.submenu` hook (next-first) appends TRAIN
+- before CANCEL on field lists only (no eggs, no battle or
+- battle-switch menus, SUMMARY + CANCEL present, dupe-safe).
+- The full seam list lives in `seams.md`.
 - Text: `src.ui.game3.frlg_font` small face, 240x160 1:1, no scaling.
 - Items: native `mon.item` / `mon.heldItem`, snapshot at `battle.started`
 - (priority 1000), restore at `battle.ended` (priority -1000).
@@ -71,6 +73,18 @@ HIDDEN ability: the tab reports that hidden abilities are not in this port
 and changes nothing. Ability slots resolve from the native
 `src.core.game3.pokemon.abilities` pair.
 
+## Nature / ability / gender writes
+
+Nature, ability slot and gender all go through `mon.personality` (nature =
+`personality % 25`, ability slot = parity, gender = low byte vs the ROM
+ratio), which is what the engine itself derives them from — no separate
+nature/ability fields are trusted. Changing ability forces the matching
+parity (odd = slot 2), so the pick survives engine recalculation; gender
+is preserved via the native gender check, or by pinning the personality
+low byte on engines without it. If no personality satisfies the request
+(e.g. a gender change with no engine gender data), the commit aborts with
+a `PERSONALITY FAILED` status and charges nothing.
+
 ## Flat 4 EVs
 
 `4 EVS` (default OFF) wraps the native `Pokemon.gainEVs`: any stat that
@@ -104,6 +118,40 @@ at 37+. Multiple eligible targets pick randomly. Defaults chosen where
 the spec was silent: Feebas (Beauty) at 35 like stones; trade-item same
 as plain trade; day/night and friendship values ignored; no National Dex
 gate (trainers field Hoenn mons pre-National in vanilla too).
+Evolution targets from a gen disabled in poke-ecology are skipped while
+that mod is present (the mon keeps its current stage); without it every
+target is eligible.
+
+## Gym teams
+`GYM TEAMS` (default OFF) fills gym leader and Elite Four teams to 6 in
+the `trainer.party` hook with random mons whose primary or secondary
+type matches the leader's specialty: Roxanne rock (Nosepass, Geodude),
+Brawly fighting (Makuhita, Meditite), Wattson electric (Manectric,
+Magneton), Flannery fire (Torkoal, Camerupt), Norman
+normal (Slaking, Vigoroth), Winona flying (Altaria, Skarmory), Tate and
+Liza psychic (Solrock, Lunatone), Juan water (Kingdra, Crawdaunt),
+Sidney dark (Absol, Shiftry), Phoebe ghost (Dusclops, Banette), Glacia
+ice (Walrein, Glalie), Drake dragon (Salamence, Flygon), Wallace water
+(Milotic, Gyarados). First battles and rematches alike are filled; the
+listed aces are untouched by the fill but moved to the last slot, so
+the ace is fought last; only the missing slots are added. Each added
+slot picks an evolution line with the specialty type anywhere in it,
+then fields the stage the team's top level allows under the same
+conditions `ENEMY EVO` uses (level rows at their level, trade and
+happiness at 25, or 40 for 3-stage finals, stones and Feebas at 35,
+Wurmple at 7, Eevee and Tyrogue at 25+, Nincada and Slowpoke splits),
+resolved through the shared trainer-evolution helper so the
+battle-start pass keeps the arrivals as-is. Low-level teams get first
+stages, high-level teams their finals. No duplicate of a species
+already on the team; legendaries never join (poke-ecology's legendary
+and mythical list joins the never-pick set while that mod is present).
+Fill reads poke-ecology's GEN 1..9 toggles when that mod is present:
+a resolved stage from a disabled gen never joins — a cross-gen line
+fields its highest enabled stage at the team's level instead (Nosepass
+stays Nosepass with GEN 4 off) — and without poke-ecology every species
+is eligible. Added mons enter at the
+team's top level with no set moves (the engine deals level-up moves).
+The fill runs inside `Bridge.start` before the battle is built.
 
 ## Credits
 

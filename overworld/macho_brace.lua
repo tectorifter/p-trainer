@@ -38,13 +38,14 @@ return function(mod)
   if SM.__ptShopWrapped then return end
   SM.__ptShopWrapped = true
   local nativeShow = SM.show
-  SM.show = function(...)
-    local a1 = select(1, ...)
-    if on() and type(a1) == "table" then
+  local braceLogged = false
+  SM.show = function(opts, ...)
+    local useOpts = opts
+    if on() and type(opts) == "table" then
       pcall(function()
-        local sess = a1.session
+        local sess = opts.session
         if not (type(sess) == "table" and sess.map == MART_MAP) then return end
-        local items = a1.items
+        local items = opts.items
         if type(items) ~= "table" then return end
         local n = 0
         for k, v in pairs(items) do
@@ -57,13 +58,19 @@ return function(mod)
         for _, v in ipairs(items) do
           if v == brace then return end
         end
-        items[#items + 1] = brace
-        if items[#items] == brace then
+        local stock = {}
+        for i, id in ipairs(items) do stock[i] = id end
+        stock[#stock + 1] = brace
+        useOpts = {}
+        for k, v in pairs(opts) do useOpts[k] = v end
+        useOpts.items = stock
+        if not braceLogged then
+          braceLogged = true
           mod.log:info("pokemon-trainer: MACHO BRACE added to Oldale shop")
         end
       end)
     end
-    return nativeShow(...)
+    return nativeShow(useOpts, ...)
   end
   mod.log:info("pokemon-trainer: macho brace installed")
 end

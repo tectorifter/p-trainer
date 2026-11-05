@@ -1,6 +1,6 @@
 return {
   summary = "Gen 3 (Emerald) TRAIN editor: IVs, EVs, nature, ability slot and Relearn/TM/Egg/Tutor moves via the party menu, plus item reuse, Exp. Share, forced doubles, rematches, level adapt and difficulty.",
-  author = "Emerald Mod Studio",
+  author = "tectorifter",
   tags = { "gen3", "emerald", "trainer", "train", "ev" },
   differences = {
     added = {
@@ -9,7 +9,8 @@ return {
       "ITEM REUSE: held items consumed or lost in battle return afterwards. EXP SHARE: off / gen1 / gen2 / gen3 / gen6 party splits on Gen 3's own exp seam.",
       "DAMAGE SPLIT applies the gen 4 physical/special move split (off by default).",
       "DOUBLES forces 2+ mon trainers into native double battles. REMATCHES asks beaten trainers for a paid rematch. LV ADAPT (-5/+5/+10/0) and DIFFICULTY (easy/normal/hard/very hard/hell) retune trainer teams.",
-      "ENEMY EVO evolves trainer mons whose level allows it (off by default).",    },
+      "ENEMY EVO evolves trainer mons whose level allows it (off by default).",
+      "GYM TEAMS fills gym leader and Elite Four teams to 6 with random specialty-type mons (off by default), moving each team's ace to the last slot so it is fought last; added slots field the evolution stage the team's top level allows, following poke-ecology's GEN 1..9 toggles when that mod is present.",    },
     known = {
       "The HIDDEN ability button is a stub in this port: it reports that hidden abilities are not available yet and changes nothing.",
       "The MOVES page lists every move in the game's own ROM data; picks are validated against it at commit.",

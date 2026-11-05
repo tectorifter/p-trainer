@@ -30,13 +30,17 @@ return function(mod)
     return st == Party.PLAYER_HAS_TWO_USABLE_MONS
   end
   Bridge.start = function(mArg, game, foe, opts)
+    local useOpts = opts
     local ok, err = pcall(function()
       if S.opt("doubles", false) == true and type(opts) == "table"
           and not opts.wild and opts.double ~= true
           and not opts.twoOpponents then
         local party = foe and foe.party
         if type(party) == "table" and #party >= 2 and playerHasTwo(game) then
-          opts.double = true
+          local copy = {}
+          for k, v in pairs(opts) do copy[k] = v end
+          copy.double = true
+          useOpts = copy
           if type(foe) == "table" then foe.doubleBattle = true end
         end
       end
@@ -44,7 +48,7 @@ return function(mod)
     if not ok then
       mod.log:warn("pokemon-trainer: doubles forcing failed: %s", tostring(err))
     end
-    return nativeStart(mArg, game, foe, opts)
+    return nativeStart(mArg, game, foe, useOpts)
   end
   mod.log:info("pokemon-trainer: doubles installed")
 end

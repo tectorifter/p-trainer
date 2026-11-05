@@ -25,25 +25,36 @@ return function(mod)
     if ok2 and tonumber(v2) ~= nil then return tonumber(v2) ~= 0 end
     return false
   end
+  local holdModCache = nil
+  local machoWant = nil
+  local machoProbed = false
   local function multFor(mon)
     local m = 1
     if pkrsActive(mon) then m = m * 2 end
-    local ok, H = pcall(require, "src.core.game3.battle.held_items")
-    if ok and H and type(H.effectOf) == "function" and type(H.HOLD) == "table" then
-      local want = nil
-      for k, v in pairs(H.HOLD) do
-        if type(k) == "string" and string.find(string.upper(k), "MACHO") then
-          want = v
-          break
+    if not machoProbed then
+      machoProbed = true
+      pcall(function()
+        local H = require("src.core.game3.battle.held_items")
+        if H and type(H.effectOf) == "function"
+            and type(H.HOLD) == "table" then
+          holdModCache = H
+          for k, v in pairs(H.HOLD) do
+            if type(k) == "string"
+                and string.find(string.upper(k), "MACHO") then
+              machoWant = v
+              break
+            end
+          end
         end
-      end
-      if want ~= nil then
-        local it = nil
-        pcall(function() it = mon.item end)
-        if it == nil then pcall(function() it = mon.heldItem end) end
-        local okF, fx = pcall(H.effectOf, it)
-        if okF and fx == want then m = m * 2 end
-      end
+      end)
+    end
+    local H = holdModCache
+    if H ~= nil and machoWant ~= nil then
+      local it = nil
+      pcall(function() it = mon.item end)
+      if it == nil then pcall(function() it = mon.heldItem end) end
+      local okF, fx = pcall(H.effectOf, it)
+      if okF and fx == machoWant then m = m * 2 end
     end
     return m
   end
@@ -136,7 +147,9 @@ return function(mod)
       if not (cap and cap > 510 and species ~= nil) then return 0 end
       local y = directYield(species) or cachedYield(species, native)
       if not y then
-        evLog("%s flat NO-YIELD sp=%s", tag or "flat", tostring(species))
+        if DEBUG then
+          evLog("%s flat NO-YIELD sp=%s", tag or "flat", tostring(species))
+        end
         return 0
       end
       local award = AWARD * multFor(mon)
@@ -148,7 +161,9 @@ return function(mod)
           if give > 0 then mon.evs[key] = cur + give gave = gave + give end
         end
       end
-      evLog("%s flat-native gave=%d final=%d", tag or "flat", gave, totalOf(mon))
+      if DEBUG then
+        evLog("%s flat-native gave=%d final=%d", tag or "flat", gave, totalOf(mon))
+      end
       return gave
     end
     for _, key in ipairs(gained) do mon.evs[key] = before[key] end
@@ -159,13 +174,17 @@ return function(mod)
       local give = math.min(award, 252 - cur, cap - totalOf(mon))
       if give > 0 then mon.evs[key] = cur + give gave = gave + give end
     end
-    evLog("%s flat gave=%d final=%d", tag or "flat", gave, totalOf(mon))
+    if DEBUG then
+      evLog("%s flat gave=%d final=%d", tag or "flat", gave, totalOf(mon))
+    end
     return gave
   end
   local function topUp(mon, species, before, cap, nativeFn, tag)
     local y = directYield(species) or cachedYield(species, nativeFn)
     if not y then
-      evLog("%s sp=%s NO-YIELD", tag, tostring(species))
+      if DEBUG then
+        evLog("%s sp=%s NO-YIELD", tag, tostring(species))
+      end
       return
     end
     local m = multFor(mon)
@@ -183,9 +202,11 @@ return function(mod)
     end
     local bTot = 0
     for _, key in ipairs(ORDER) do bTot = bTot + before[key] end
-    evLog("%s sp=%s cap=%d before=%d yield=%d mult=%d gave=%d final=%d %s",
-      tag, tostring(species), cap, bTot, yTot, m, gave, totalOf(mon),
-      gave == 0 and ("detail:" .. table.concat(detail, " ")) or "")
+    if DEBUG then
+      evLog("%s sp=%s cap=%d before=%d yield=%d mult=%d gave=%d final=%d %s",
+        tag, tostring(species), cap, bTot, yTot, m, gave, totalOf(mon),
+        gave == 0 and ("detail:" .. table.concat(detail, " ")) or "")
+    end
   end
   if not native then
     mod.log:warn("pokemon-trainer: EV gain has no gainEVs seam")
@@ -266,22 +287,24 @@ return function(mod)
       local benchPaid = mod.exports.ptBenchPaid or {}
       mod.exports.ptBenchPaid = {}
       local okPost, postErr = pcall(function()
-        if not firstAwardLog then
+        if DEBUG and not firstAwardLog then
           firstAwardLog = true
           local parts = {}
           for i = 1, nargs do parts[#parts + 1] = shallow(args[i]) end
           evLog("award nargs=%d mons=%d %s", nargs, #mons,
             table.concat(parts, " "))
         end
-        for _, m in ipairs(mons) do
-          local sp = {}
-          for _, k in ipairs(ORDER) do sp[#sp + 1] = tonumber(m.evs[k]) or 0 end
-          local hasB = befores[m] ~= nil
-          local hpV, eggV = "?", "?"
-          pcall(function() hpV = tostring(m.hp) end)
-          pcall(function() eggV = tostring(m.isEgg) end)
-          evLog("awardmon cap=%d evTot=%d spread=%s hasBefore=%s hp=%s egg=%s",
-            caps[m] or -1, totalOf(m), table.concat(sp, "/"), tostring(hasB), hpV, eggV)
+        if DEBUG then
+          for _, m in ipairs(mons) do
+            local sp = {}
+            for _, k in ipairs(ORDER) do sp[#sp + 1] = tonumber(m.evs[k]) or 0 end
+            local hasB = befores[m] ~= nil
+            local hpV, eggV = "?", "?"
+            pcall(function() hpV = tostring(m.hp) end)
+            pcall(function() eggV = tostring(m.isEgg) end)
+            evLog("awardmon cap=%d evTot=%d spread=%s hasBefore=%s hp=%s egg=%s",
+              caps[m] or -1, totalOf(m), table.concat(sp, "/"), tostring(hasB), hpV, eggV)
+          end
         end
         if DEBUG then
         local okSess, sessParty = pcall(function()
@@ -328,37 +351,41 @@ return function(mod)
         end
         end)
         if not okL then evLog("loserSp ERR %s", tostring(errL)) end
-        evLog("loserSp=%s via=%s", tostring(loserSp), loserVia)
-        pcall(function()
-          for i = 1, nargs do
-            local a = args[i]
-            if type(a) == "table" and (a.fainted == true or a.flank ~= nil) then
-              local sp = a.species ~= nil and a.species or a.speciesId
-              local nm = a.name or a.nickname
-                or (type(a.mon) == "table" and (a.mon.name or a.mon.nickname))
-              local nat, metaName, yv = nil, nil, nil
-              if okP and P and type(P.national) == "function" then
-                local o, n = pcall(P.national, sp)
-                if o then nat = n end
-              end
-              if okP and P and type(P.speciesMeta) == "function" then
-                local o, mm = pcall(P.speciesMeta, sp)
-                if o and type(mm) == "table" then
-                  metaName = mm.name or mm.speciesName or mm.species
+        if DEBUG then
+          evLog("loserSp=%s via=%s", tostring(loserSp), loserVia)
+        end
+        if DEBUG then
+          pcall(function()
+            for i = 1, nargs do
+              local a = args[i]
+              if type(a) == "table" and (a.fainted == true or a.flank ~= nil) then
+                local sp = a.species ~= nil and a.species or a.speciesId
+                local nm = a.name or a.nickname
+                  or (type(a.mon) == "table" and (a.mon.name or a.mon.nickname))
+                local nat, metaName, yv = nil, nil, nil
+                if okP and P and type(P.national) == "function" then
+                  local o, n = pcall(P.national, sp)
+                  if o then nat = n end
                 end
+                if okP and P and type(P.speciesMeta) == "function" then
+                  local o, mm = pcall(P.speciesMeta, sp)
+                  if o and type(mm) == "table" then
+                    metaName = mm.name or mm.speciesName or mm.species
+                  end
+                end
+                local y = directYield(sp)
+                if type(y) == "table" then
+                  yv = (y.hp or 0) .. "/" .. (y.atk or 0) .. "/" .. (y.def or 0)
+                    .. "/" .. (y.spa or 0) .. "/" .. (y.spd or 0) .. "/" .. (y.spe or 0)
+                end
+                evLog("foeprobe sp=%s nat=%s name=%s meta=%s evy=%s",
+                  tostring(sp), tostring(nat), tostring(nm),
+                  tostring(metaName), tostring(yv))
+                break
               end
-              local y = directYield(sp)
-              if type(y) == "table" then
-                yv = (y.hp or 0) .. "/" .. (y.atk or 0) .. "/" .. (y.def or 0)
-                  .. "/" .. (y.spa or 0) .. "/" .. (y.spd or 0) .. "/" .. (y.spe or 0)
-              end
-              evLog("foeprobe sp=%s nat=%s name=%s meta=%s evy=%s",
-                tostring(sp), tostring(nat), tostring(nm),
-                tostring(metaName), tostring(yv))
-              break
             end
-          end
-        end)
+          end)
+        end
         for _, m in ipairs(mons) do
           local before = befores[m]
           local skip = nil
@@ -371,7 +398,9 @@ return function(mod)
             elseif not pass then skip = "guard-false" end
           end
           if skip then
-            evLog("awardskip %s evTot=%d", skip, totalOf(m))
+            if DEBUG then
+              evLog("awardskip %s evTot=%d", skip, totalOf(m))
+            end
           else
             local okM, errM = pcall(function()
               if active then flatAward(m, before, caps[m], "awardF", loserSp)
@@ -472,11 +501,15 @@ return function(mod)
                 end
               end
             end
-            evLog("evcheck idx=%d sp=%s before=%d fixed=%d final=%d",
-              idx, tostring(rec.species), bTot, fixed, totNow())
+            if DEBUG then
+              evLog("evcheck idx=%d sp=%s before=%d fixed=%d final=%d",
+                idx, tostring(rec.species), bTot, fixed, totNow())
+            end
           else
-            evLog("evcheck idx=%d NO-MATCH sp=%s", idx,
-              tostring(rec.species))
+            if DEBUG then
+              evLog("evcheck idx=%d NO-MATCH sp=%s", idx,
+                tostring(rec.species))
+            end
           end
         end
       end)

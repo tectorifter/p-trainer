@@ -4,6 +4,62 @@ return function(mod)
   local function talkOn()
     return S.opt("rematches", false) == true
   end
+  local pendingTid, armedTid = nil, nil
+  local function setDefeated(tid, beaten)
+    pcall(function()
+      local Space = require("src.core.game3.scripting.space")
+      local Flags = require("src.core.game3.scripting.flags")
+      Flags.setTrainerDefeated(Space.store, nil, tid, beaten)
+    end)
+  end
+  local function playerLost(ev)
+    local r = type(ev) == "table" and ev.result or nil
+    if type(r) == "string" then
+      local rl = string.lower(r)
+      if string.find(rl, "los", 1, true) or string.find(rl, "white", 1, true)
+          or string.find(rl, "black", 1, true)
+          or string.find(rl, "defeat", 1, true) then
+        return true
+      end
+      if rl == "win" or rl == "won" or rl == "victory" or rl == "winner" then
+        return false
+      end
+    end
+    local b = type(ev) == "table" and ev.battle or nil
+    local party = nil
+    if type(b) == "table" then party = b.playerParty or b.party end
+    if type(party) ~= "table" then
+      local okR, R = pcall(require, "src.core.game3.runtime")
+      if okR and R and type(R.getSession) == "function" then
+        local okS, s = pcall(R.getSession)
+        if okS and type(s) == "table" then party = s.party end
+      end
+    end
+    if type(party) == "table" then
+      local any, alive = false, false
+      for _, m in ipairs(party) do
+        if type(m) == "table" then
+          any = true
+          if (tonumber(m.hp) or 0) > 0 and not m.isEgg then alive = true break end
+        end
+      end
+      if any then return not alive end
+    end
+    return false
+  end
+  if mod.events and type(mod.events.on) == "function" then
+    mod.events:on("battle.started", function(ev)
+      if pendingTid == nil then return end
+      local tid = type(ev) == "table" and ev.trainerId or nil
+      if tid == nil or tid == pendingTid then armedTid = pendingTid end
+    end)
+    mod.events:on("battle.ended", function(ev)
+      local tid = armedTid
+      armedTid, pendingTid = nil, nil
+      if tid == nil then return end
+      if playerLost(ev) then setDefeated(tid, true) end
+    end)
+  end
   local function findEo(...)
     for i = 1, select("#", ...) do
       local a = select(i, ...)
@@ -47,11 +103,8 @@ return function(mod)
       Message.show("Battle again?", function()
         Choice.yesNo(function(yes)
           if yes then
-            pcall(function()
-              local Space = require("src.core.game3.scripting.space")
-              local Flags = require("src.core.game3.scripting.flags")
-              Flags.setTrainerDefeated(Space.store, nil, tid, false)
-            end)
+            setDefeated(tid, false)
+            pendingTid, armedTid = tid, nil
             pcall(Message.close, Message)
             nextFn(game, unpack(args, 2))
           else

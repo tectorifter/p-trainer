@@ -68,6 +68,22 @@ return function(mod)
     if ok and type(P) == "table" then return P end
     return nil
   end
+  local function gen3SpeciesNum(monOrSpecies)
+    local P = g3Pokemon()
+    local s = monOrSpecies
+    if type(s) == "table" then s = s.species end
+    if P then
+      if type(s) == "table" then
+        local ok, n = pcall(P.speciesOf, s)
+        if ok and tonumber(n) then return tonumber(n) end
+      elseif type(s) == "string" and not tonumber(s)
+        and type(P.speciesFromName) == "function" then
+        local ok, n = pcall(P.speciesFromName, s)
+        if ok and tonumber(n) then return tonumber(n) end
+      end
+    end
+    return tonumber(s)
+  end
   local function gen3SpeciesName(mon)
     local P = g3Pokemon()
     if P and type(P.name) == "function" and mon then
@@ -91,28 +107,57 @@ return function(mod)
     if mon.gender == "F" then return "female" end
     return nil
   end
-  local function gen3SetPersonality(mon, wantNature, wantGender, wantParity)
-    if type(mon) ~= "table" then return false end
+  --__PERS_START__
+  -- Returns true (personality rewritten), "same" (already satisfies), or
+  -- false + reason (no write performed). spNum is the resolved numeric
+  -- species id (may be nil). wantGender should be "male"/"female"/nil.
+  -- Engine gender lookup is preferred; without it, gender is preserved by
+  -- pinning the personality low byte (gender is a pure function of it), so
+  -- nature/ability retargets keep working on engines without P.gender. A
+  -- real gender change without engine data fails loudly instead of
+  -- silently writing the wrong gender.
+  local function gen3SetPersonality(mon, spNum, wantNature, wantGender, wantParity, genderChanged)
+    if type(mon) ~= "table" then return false, "NO POKEMON" end
+    if wantGender ~= "male" and wantGender ~= "female" then
+      wantGender = nil
+      genderChanged = false
+    end
     local P = g3Pokemon()
-    if not (P and type(P.gender) == "function") then return false end
     local cur = tonumber(mon.personality) or 0
+    local haveGender = P and type(P.gender) == "function" and tonumber(spNum)
+    if genderChanged and not haveGender then
+      return false, "GENDER CHANGE NEEDS ENGINE DATA"
+    end
+    local pinLow = nil
+    if not haveGender and not genderChanged then pinLow = cur % 256 end
     local function ok(p)
       if wantNature ~= nil and (p % 25) ~= wantNature then return false end
       if wantParity ~= nil and (p % 2) ~= wantParity then return false end
+      if pinLow ~= nil and (p % 256) ~= pinLow then return false end
       if wantGender ~= nil then
-        local gok, g = pcall(P.gender, mon.species, p)
+        if not haveGender then return false end
+        local gok, g = pcall(P.gender, spNum, p)
         if not gok then return false end
         if wantGender == "male" and g ~= "M" then return false end
         if wantGender == "female" and g ~= "F" then return false end
       end
       return true
     end
-    if ok(cur) then return false end
+    if ok(cur) then return "same" end
+    if pinLow ~= nil then
+      for k = 0, 30 do
+        local p = pinLow + 256 * k
+        if ok(p) then mon.personality = p return true end
+      end
+      return false, "ABILITY PARITY CONFLICTS (NEEDS ENGINE GENDER DATA)"
+    end
     for p = 0, 26000 do
       if ok(p) then mon.personality = p return true end
     end
-    return false
+    if genderChanged then return false, "GENDER CHANGE FAILED" end
+    return false, "NO MATCHING PERSONALITY"
   end
+  --__PERS_END__
   local function gen3MoveName(numId)
     local P = g3Pokemon()
     if P and type(P.moveName) == "function" then
@@ -263,43 +308,9 @@ return function(mod)
     seen[id] = true
     out[#out + 1] = { id = id, name = name, level = tonumber(level) }
   end
-  local function nativeMovePools(mon)
-    local empty = { relearn = {}, tm = {}, egg = {}, tutor = {} }
-    local P = g3Pokemon()
-    if not P then return empty end
-    local sp = speciesNum(mon)
-    if not sp then return empty end
-    local level = 100
-    if type(mon) == "table" then level = tonumber(mon.level) or 100 end
-    local key = sp .. ":" .. level
-    local hit = poolCache[key]
-    if hit then return hit end
-    local pools = { relearn = {}, tm = {}, egg = {}, tutor = {} }
-    local seenR, seenT, seenE, seenU = {}, {}, {}, {}
-    local ML = moveLearnMod()
-    if ML and type(ML.relearnableMoves) == "function" and type(mon) == "table" then
-      local ok, ids = pcall(ML.relearnableMoves, mon)
-      if ok and type(ids) == "table" then
-        for _, id in ipairs(ids) do pushMoveId(pools.relearn, seenR, id, nil) end
-      end
-    end
-    if #pools.relearn == 0 and type(P.learnset) == "function" then
-      local ok, set = pcall(P.learnset, sp)
-      if ok and type(set) == "table" then
-        for _, e in ipairs(set) do
-          local lv, mv
-          if type(e) == "table" then
-            lv = tonumber(e[1] or e.level)
-            mv = tonumber(e[2] or e.move)
-          else
-            mv = tonumber(e)
-          end
-          if mv and (lv == nil or lv <= level) then
-            pushMoveId(pools.relearn, seenR, mv, lv)
-          end
-        end
-      end
-    end
+  local function staticPools(P, ML, sp)
+    local pools = { tm = {}, egg = {}, tutor = {} }
+    local seenT, seenE, seenU = {}, {}, {}
     if type(P.canLearnTmIndex) == "function" and type(P.moveFromTmItem) == "function" then
       for idx = 0, 57 do
         local okC, can = pcall(P.canLearnTmIndex, sp, idx)
@@ -335,7 +346,48 @@ return function(mod)
         end
       end
     end
-    poolCache[key] = pools
+    return pools
+  end
+  local function nativeMovePools(mon)
+    local empty = { relearn = {}, tm = {}, egg = {}, tutor = {} }
+    local P = g3Pokemon()
+    if not P then return empty end
+    local sp = speciesNum(mon)
+    if not sp then return empty end
+    local level = 100
+    if type(mon) == "table" then level = tonumber(mon.level) or 100 end
+    local ML = moveLearnMod()
+    local static = poolCache[sp]
+    if not static then
+      static = staticPools(P, ML, sp)
+      poolCache[sp] = static
+    end
+    local pools = { relearn = {}, tm = static.tm, egg = static.egg,
+      tutor = static.tutor }
+    local seenR = {}
+    if ML and type(ML.relearnableMoves) == "function" and type(mon) == "table" then
+      local ok, ids = pcall(ML.relearnableMoves, mon)
+      if ok and type(ids) == "table" then
+        for _, id in ipairs(ids) do pushMoveId(pools.relearn, seenR, id, nil) end
+      end
+    end
+    if #pools.relearn == 0 and type(P.learnset) == "function" then
+      local ok, set = pcall(P.learnset, sp)
+      if ok and type(set) == "table" then
+        for _, e in ipairs(set) do
+          local lv, mv
+          if type(e) == "table" then
+            lv = tonumber(e[1] or e.level)
+            mv = tonumber(e[2] or e.move)
+          else
+            mv = tonumber(e)
+          end
+          if mv and (lv == nil or lv <= level) then
+            pushMoveId(pools.relearn, seenR, mv, lv)
+          end
+        end
+      end
+    end
     return pools
   end
     local function natureMult(nature, stat)
@@ -535,7 +587,7 @@ return function(mod)
       local P = g3Pokemon()
       local list = {}
       if P and type(P.abilities) == "function" and mon then
-        local ok, pair = pcall(P.abilities, mon.species)
+        local ok, pair = pcall(P.abilities, gen3SpeciesNum(mon) or mon.species)
         if ok and type(pair) == "table" then
           for i = 1, 2 do
             if pair[i] ~= nil then list[#list + 1] = pair[i] end
@@ -680,9 +732,26 @@ return function(mod)
     for i, n in ipairs(G3_NATURES) do
       if n == self.nature then wantNature = i - 1 break end
     end
-    local parity = nil
-    if tonumber(mon.personality) then parity = tonumber(mon.personality) % 2 end
-    gen3SetPersonality(mon, wantNature, self.gender, parity)
+    local abilityChanged = (self.abilityIdx ~= self.baseAbilityIdx)
+    local natureChanged = (self.nature ~= self.baseNature)
+    local genderChanged = (self.gender or "") ~= (self.baseGender or "")
+    local spNum = gen3SpeciesNum(mon)
+    local curPers = tonumber(mon.personality)
+    local wantParity = curPers and (curPers % 2) or nil
+    if abilityChanged then
+      -- Engine ability slot is personality parity (odd = slot 2 when it
+      -- exists); preserving stale parity here is what silently reverted
+      -- ability picks, so force it to the chosen slot.
+      wantParity = (self.abilityIdx == 2) and 1 or 0
+    end
+    if natureChanged or abilityChanged or genderChanged then
+      local okPers, perr = gen3SetPersonality(mon, spNum, wantNature,
+        self.gender, wantParity, genderChanged)
+      if not okPers then
+        self.status = "PERSONALITY FAILED" .. (perr and (": " .. perr) or "")
+        return
+      end
+    end
     if self.abilityIdx ~= self.baseAbilityIdx then
       local picked = self.abilities[self.abilityIdx]
       if picked == nil or tonumber(picked) == 0 then
@@ -693,7 +762,7 @@ return function(mod)
       local P = g3Pokemon()
       local pair = nil
       if P and type(P.abilities) == "function" then
-        local ok, res = pcall(P.abilities, mon.species)
+        local ok, res = pcall(P.abilities, spNum or mon.species)
         if ok and type(res) == "table" then pair = res end
       end
       local picked = self.abilities[self.abilityIdx]
@@ -1480,10 +1549,8 @@ return function(mod)
     local okPM, PM = pcall(require, "src.ui.game3.party_menu")
     local okStack, Stack3 = pcall(require, "src.ui.game3.stack")
     if okPM and type(PM) == "table" and okStack and type(Stack3) == "table"
-        and type(PM.handleInput) == "function"
         and not PM.__ptTrainWrapped then
       PM.__ptTrainWrapped = true
-      local okAudio, Audio = pcall(require, "src.core.game3.audio")
       if not Frlg then
         mod.log:warn("pokemon-trainer: TRAIN not injected -- no gen3 font")
       else
@@ -1555,70 +1622,6 @@ return function(mod)
         TrainG3.open = false
         pcall(Stack3.pop, "pttrain")
       end
-      local CARRIER = "STORE"
-      local trainHere = false
-      local function carrierPresent()
-        if not trainHere then return false end
-        local acts = PM.ACTIONS
-        if type(acts) ~= "table" then return false end
-        for _, a in ipairs(acts) do if a == CARRIER then return true end end
-        return false
-      end
-      do
-        local okRT, RomText = pcall(require, "src.core.game3.rom_text")
-        if okRT and type(RomText) == "table"
-            and type(RomText.at) == "function"
-            and not RomText.__ptTrainWrapped then
-          RomText.__ptTrainWrapped = true
-          local nativeAt = RomText.at
-          RomText.at = function(key, idx, ...)
-            if carrierPresent() then
-              if key == "sCursorOptions" and idx == 14 then
-                return "TRAIN"
-              end
-              local okR, res = pcall(nativeAt, key, idx, ...)
-              if not okR or res == nil or res == "" then
-                return "TRAIN"
-              end
-              return res
-            end
-            return nativeAt(key, idx, ...)
-          end
-        end
-      end
-      local emeraldLabelOriginal = nil
-      local emeraldLabelPatched = false
-      local function setEmeraldTrainLabel(want)
-        local okP, Profile = pcall(require, "src.core.game3.profile")
-        if not okP then return false end
-        local famOk, fam = pcall(Profile.family, PM._session)
-        if not (famOk and (fam == "rse" or fam == "emerald")) then return false end
-        local okS, Kit = pcall(require, "src.ui.game3.rse.scene_kit")
-        if not (okS and type(Kit) == "table"
-            and type(Kit.manifest) == "function") then return false end
-        local okR, row = pcall(Profile.forSession, PM._session)
-        local prow = okR and type(row) == "table" and row.ui
-          and row.ui.party or nil
-        local sub = type(prow) == "table" and prow.manifest or nil
-        if type(sub) ~= "string" then return false end
-        local okM, m = pcall(Kit.manifest, sub)
-        local labels = okM and type(m) == "table" and m.party
-          and m.party.cursorOptions or nil
-        if type(labels) ~= "table" then return false end
-        if want then
-          if not emeraldLabelPatched then
-            emeraldLabelOriginal = labels[15]
-            emeraldLabelPatched = true
-          end
-          labels[15] = "TRAIN"
-        else
-          if emeraldLabelPatched then
-            labels[15] = emeraldLabelOriginal
-            emeraldLabelPatched = false
-          end
-        end
-        return true
-      end
       local function trainAllowedSession()
         local okP, Profile = pcall(require, "src.core.game3.profile")
         if not (okP and type(Profile) == "table"
@@ -1628,8 +1631,7 @@ return function(mod)
         if fam == nil then return true end
         return fam == "frlg" or fam == "rse" or fam == "emerald"
       end
-      local function openGen3Train()
-        local mon = PM._party and PM._party[PM.cursor]
+      local function openGen3Train(mon)
         if type(mon) ~= "table" or mon.isEgg then return end
         gen3Session = PM._session
         local fakeGame = { data = nil, input = nil, stack = {} }
@@ -1670,81 +1672,39 @@ return function(mod)
           mod.log:warn("pokemon-trainer: TRAIN screen failed to push")
         end
       end
-      local function fieldList(acts)
-        if type(acts) ~= "table" then return false end
+      mod.hooks:wrap("ui.party.submenu", function(nextFn, game, items, mon, ctx)
+        local out = nextFn(game, items, mon, ctx)
+        if type(out) ~= "table" then out = items end
+        if type(out) ~= "table" then return out end
+        if type(ctx) == "table" and ctx.battle then return out end
+        if type(mon) == "table" and mon.isEgg then return out end
+        if not trainAllowedSession() then return out end
+        if PM._previousMode == "battle_switch" then return out end
         local hasSummary, hasCancel = false, false
-        for _, a in ipairs(acts) do
-          if a == "SUMMARY" then hasSummary = true end
-          if a == "CANCEL" then hasCancel = true end
-          if a == "SHIFT" or a == "SEND OUT" or a == "ENTER"
-              or a == "NO ENTRY" then return false end
-        end
-        return hasSummary and hasCancel
-      end
-      local function ensureTrain()
-        local acts = PM.ACTIONS
-        local function strip()
-          if type(acts) == "table" then
-            for i = #acts, 1, -1 do
-              if acts[i] == CARRIER then table.remove(acts, i) end
+        for _, row in ipairs(out) do
+          if type(row) == "table" then
+            if row.action == "SHIFT" or row.action == "SEND OUT"
+                or row.action == "ENTER" or row.action == "NO ENTRY" then
+              return out
             end
-            if PM.actionCursor > #acts then
-              PM.actionCursor = math.max(1, #acts)
-            end
-          end
-          trainHere = false
-          setEmeraldTrainLabel(false)
-        end
-        if type(acts) ~= "table" then
-          trainHere = false
-          setEmeraldTrainLabel(false)
-          return
-        end
-        if not trainAllowedSession() then strip() return end
-        if fieldList(acts) then
-          if PM._previousMode == "battle_switch" then strip() return end
-          local mon = PM._party and PM._party[PM.cursor]
-          if type(mon) == "table" and mon.isEgg then strip() return end
-          for _, a in ipairs(acts) do
-            if a == CARRIER then
-              trainHere = true
-              setEmeraldTrainLabel(true)
-              return
-            end
-          end
-          for i, a in ipairs(acts) do
-            if a == "CANCEL" then
-              table.insert(acts, i, CARRIER)
-              trainHere = true
-              setEmeraldTrainLabel(true)
-              return
-            end
-          end
-          acts[#acts + 1] = CARRIER
-          trainHere = true
-          setEmeraldTrainLabel(true)
-        else
-          strip()
-        end
-      end
-      local nativeHandle = PM.handleInput
-      PM.handleInput = function(input)
-        if PM.mode == "action" then ensureTrain() end
-        if PM.mode == "action" and input
-            and type(input.wasPressed) == "function"
-            and input:wasPressed("a") then
-          local acts = PM.ACTIONS
-          if type(acts) == "table" and trainHere
-              and acts[PM.actionCursor] == CARRIER then
-            if okAudio and Audio and type(Audio.playSe) == "function" then
-              pcall(Audio.playSe, "SE_SELECT")
-            end
-            openGen3Train()
-            return
+            if row.action == "SUMMARY" then hasSummary = true end
+            if row.action == "CANCEL" then hasCancel = true end
+            if row.action == nil and type(row.onSelect) == "function"
+                and row.label == "TRAIN" then return out end
           end
         end
-        return nativeHandle(input)
-      end
+        if not (hasSummary and hasCancel) then return out end
+        local entry = { label = "TRAIN",
+          onSelect = function(target) openGen3Train(target) end }
+        for i, row in ipairs(out) do
+          if type(row) == "table" and row.action == "CANCEL" then
+            table.insert(out, i, entry)
+            return out
+          end
+        end
+        out[#out + 1] = entry
+        return out
+      end)
       end
     end
     mod.events:on("battle.started", function()

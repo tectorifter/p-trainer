@@ -10,6 +10,47 @@ return function(mod)
   local WURMPLE_LVL, EEVEE_LVL, TYROGUE_LVL = 7, 25, 25
   local SHEDINJA_LVL, SLOWKING_LVL, SLOWPOKE_SPLIT = 25, 25, 37
   local EVERSTONE_ID = 195
+  local GEN_HI = { 151, 251, 386, 493, 649, 721, 809, 905, 1025 }
+  local function genOfNat(nat)
+    nat = math.floor(tonumber(nat) or 0)
+    if nat < 1 then return 0 end
+    for g = 1, 9 do
+      if nat <= GEN_HI[g] then return g end
+    end
+    return 0
+  end
+  local function ecoMod()
+    local ok, m = pcall(function() return mod.find("poke-ecology") end)
+    if ok and type(m) == "table" then return m end
+    return nil
+  end
+  local function targetGenOk(P, eco, t)
+    t = math.floor(tonumber(t) or 0)
+    if t <= 0 then return false end
+    if P == nil or type(P.national) ~= "function" then return true end
+    if eco == nil then return true end
+    local nat = nil
+    pcall(function() nat = math.floor(tonumber(P.national(t)) or 0) end)
+    if nat == nil or nat <= 0 then return true end
+    local g = genOfNat(nat)
+    if g < 1 or g > 9 then return true end
+    local v = nil
+    pcall(function()
+      if eco.options and type(eco.options.get) == "function" then
+        v = eco.options:get("gen" .. g)
+      end
+    end)
+    if v == nil then return true end
+    return v ~= false
+  end
+  local function onlyGen(P, eco, list)
+    local out = {}
+    if type(list) ~= "table" then return out end
+    for _, t in ipairs(list) do
+      if targetGenOk(P, eco, t) then out[#out + 1] = t end
+    end
+    return out
+  end
   local function evoOn()
     return S.opt("enemy_evo", false) == true
   end
@@ -139,6 +180,7 @@ return function(mod)
     if not s then return false end
     local L = tonumber(mon.level) or 0
     if L <= 0 then return false end
+    local eco = ecoMod()
     local okR, rows = pcall(P.evolutions, s)
     if not (okR and type(rows) == "table") or #rows == 0 then return false end
     local eevee = namedId(P, "EEVEE")
@@ -148,19 +190,19 @@ return function(mod)
     local slowpoke = namedId(P, "SLOWPOKE")
     if wurmple and s == wurmple then
       if L < WURMPLE_LVL then return false end
-      local t = pick(rowTargets(rows))
+      local t = pick(onlyGen(P, eco, rowTargets(rows)))
       if t then return applyTarget(P, EVO, mon, t) end
       return false
     end
     if eevee and s == eevee then
       if L < EEVEE_LVL then return false end
-      local t = pick(rowTargets(rows))
+      local t = pick(onlyGen(P, eco, rowTargets(rows)))
       if t then return applyTarget(P, EVO, mon, t) end
       return false
     end
     if tyrogue and s == tyrogue then
       if L >= TYROGUE_LVL then
-        local t = pick(rowTargets(rows))
+        local t = pick(onlyGen(P, eco, rowTargets(rows)))
         if t then return applyTarget(P, EVO, mon, t) end
         return false
       end
@@ -179,9 +221,11 @@ return function(mod)
         end
       end
       if L >= SHEDINJA_LVL and ninja and ninja > 0 and shed and shed > 0 then
-        return applyTarget(P, EVO, mon, pick({ ninja, shed }))
+        local t = pick(onlyGen(P, eco, { ninja, shed }))
+        if t then return applyTarget(P, EVO, mon, t) end
+        return false
       end
-      if ninja and ninja > 0 and ninjaParam <= L then
+      if ninja and ninja > 0 and ninjaParam <= L and targetGenOk(P, eco, ninja) then
         return applyTarget(P, EVO, mon, ninja)
       end
       return false
@@ -200,9 +244,11 @@ return function(mod)
         end
       end
       if L >= SLOWPOKE_SPLIT and bro and bro > 0 and broParam <= L and king and king > 0 then
-        return applyTarget(P, EVO, mon, pick({ bro, king }))
+        local t = pick(onlyGen(P, eco, { bro, king }))
+        if t then return applyTarget(P, EVO, mon, t) end
+        return false
       end
-      if L >= SLOWKING_LVL and king and king > 0 then
+      if L >= SLOWKING_LVL and king and king > 0 and targetGenOk(P, eco, king) then
         return applyTarget(P, EVO, mon, king)
       end
       return false
@@ -211,7 +257,7 @@ return function(mod)
     for _, evo in ipairs(rows) do
       if type(evo) == "table" then
         local m, param, t = rowMethod(evo), rowParam(evo), rowTarget(evo)
-        if t > 0 then
+        if t > 0 and targetGenOk(P, eco, t) then
           if m == LEVEL or m == NINJASK_M then
             if param <= L then cands[#cands + 1] = t end
           elseif m == ATK_GT or m == ATK_EQ or m == ATK_LT then
@@ -267,6 +313,15 @@ return function(mod)
       if tonumber(party[1].level) then foe.level = party[1].level end
       if party[1].species ~= nil then foe.species = party[1].species end
     end
+  end
+  function S.evolveTrainerMon(mon)
+    if type(mon) ~= "table" then return nil end
+    local P = S.g3Pokemon()
+    if not P then return nil end
+    local okE, EVO = pcall(require, "src.core.game3.evolution")
+    if not (okE and EVO and type(EVO.apply) == "function") then return nil end
+    pcall(evolveMon, P, EVO, mon)
+    return tonumber(mon.speciesId) or tonumber(mon.species)
   end
   local okB, Bridge = pcall(require, "src.core.game3.battle_bridge")
   if okB and type(Bridge) == "table" and type(Bridge.start) == "function" then
