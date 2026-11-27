@@ -1,14 +1,28 @@
 # pokemon-trainer — documentation
 
-Independent Gen 3 TRAIN editor: a 240x160 surface drawn 1:1 (no scaling) over an FRLG-blue surround,
-tab strip (IV / EV / NAT / M-F / MOVES / ABIL / HID) in the small font face,
-framed rows with a double frame on the cursor, a COST / APPLY band, and a
-moves page with RELEARN / TM / EGG / TUTOR lists from the game's own data (single-column list with a detail panel (type/power/accuracy/PP/effect)); relearn moves are free, the rest cost 5000.
+Independent Gen 3 summary-screen editor: open any party mon's
+native summary and press SELECT (or F) on the skills page for
+an EV / IV / APPLY / CANCEL menu opening two-column stat grids
+with a CONFIRM row (IV +1, EV +4 a step, hold to repeat), and a
+profile page editing nature and ability slot. Commits go through
+the "This will cost XXXX, you want to proceed?" confirm; NO
+backs out and drops staged changes.
+
+## Save editor + national_dex
+
+In the save-editor host (same detect as national_dex: Gen with
+`bindGame3Data` + App session + gen 3) the mod installs no
+battle/world/UI seams at all — there is nothing for it to do
+there — and runs a `mods.loaded` check that refills any missing
+live species names (name, reverse index, National maps) from the
+merged pokemon registry. That covers the national_dex combo
+failure (`Save disabled: ... no ROM species name for species
+848`, a dex slot with no live name when the save hydrates).
 
 ## Costs
 
-IV point 200, EV point 125, nature change 2000, move 5000, ability-slot swap
-5000. Gender is free. The wallet is the party-menu session money.
+IV point 200, EV point 125, nature change 2000, ability-slot swap
+5000, tutor/egg move 5000. The wallet is the party-menu session money.
 
 ## EV caps
 
@@ -16,16 +30,30 @@ IV point 200, EV point 125, nature change 2000, move 5000, ability-slot swap
 side (NPC = enemy trainers, PLAYER = the player's party, BOTH = everyone;
 the safari-plus `1512 EVS` toggle also covers the player's party while that
 mod is loaded).
-TRAIN refuses staged EVs over the cap; battle-start re-applies committed
-mons through the native `Pokemon.applyStats`. Battle EV gains honor the
+The editor refuses staged EVs over the cap; commits apply through
+the native `Pokemon.applyStats`. Battle EV gains honor the
 raised total too: yields the native code would have clamped at 510 are
 topped up to the side's cap (Macho Brace / Pokerus multipliers kept).
 
 ## Seams (all read from the live dev-branch engine source)
 
-- Party row: the `ui.party.submenu` hook (next-first) appends TRAIN
-- before CANCEL on field lists only (no eggs, no battle or
-- battle-switch menus, SUMMARY + CANCEL present, dupe-safe).
+- Party rows: a raw `PartyMenu.handleInput` patch (Highlander
+- method, in-place on the shared string list) inserts TUTOR when
+- the mon has tutor moves to learn and EGG MOVE when it has egg
+- moves to learn, before CANCEL on field lists only (no eggs, no
+- battle or battle-switch menus, SUMMARY + CANCEL present,
+- dupe-safe), syncs `PartyMenu._actionTexts` for the new rows
+- (literal texts, never through the engine's option-text assert),
+- and consumes A on them to open a locked move list: TUTOR locked
+- to TUTOR, EGG MOVE locked to EGG (own Stack layer ids,
+- `pttutor` / `pteggmove`, so layers can't collide), each teaching
+- at 5000 like before. Locked lists ignore left/right and close
+- on B. The EGG list unions `Pokemon.eggMoves` across the mon's
+- whole evolution line (reverse map derived from live engine
+- evolution data, nothing hardcoded) including known moves
+- (re-teaching one reports ALREADY KNOWN, free). No
+- `ui.party.submenu` subscription, so the engine keeps the raw
+- string list other party mods patch.
 - The full seam list lives in `seams.md`.
 - Text: `src.ui.game3.frlg_font` small face, 240x160 1:1, no scaling.
 - Items: native `mon.item` / `mon.heldItem`, snapshot at `battle.started`
@@ -36,21 +64,7 @@ topped up to the side's cap (Macho Brace / Pokerus multipliers kept).
 - Doubles: `src.core.game3.battle_bridge.start` opts (`double == true`
 - gives a native double battle; wild excluded).
 - Levels/stats/IVs/EVs: `src.core.game3.pokemon.applyStats` with an
-- HP-ratio carry; foe parties are rebuilt fresh per battle, so trainer
-- mutations are transient.
-- Stats: base stats come from the engine's own `src.core.game3.pokemon`
-- species accessors (probed by name, shape-validated, cached per species);
-- the stat page projects them with the real gen 3 formula.
-- Moves (all from the engine's own ROM-extracted tables, never mon memory):
-- RELEARN = `MoveLearn.relearnableMoves(mon)` (same function the vanilla
-- move relearner uses: learnset entries at/below the mon's level, minus
-- known moves), falling back to `Pokemon.learnset(species)` filtered to
-- mon level. TM = every machine index 0..57 passing
-- `Pokemon.canLearnTmIndex(species, idx)`, mapped through
-- `Pokemon.moveFromTmItem(289+idx)`, minus `Pokemon.isHmMove` HMs. EGG =
-- `Pokemon.eggMoves(species)`. TUTOR = every tutor index below
-- `MoveLearn.tutorMoveCount()` passing `MoveLearn.canLearnTutorMove`,
-- mapped through `MoveLearn.tutorMove`. Picks re-validate vs ROM.
+- HP-ratio carry; staged IV/EV/nature commits take effect at once.
 - Rematch: the `world.talk` hook (`src/core/game3/field.lua`
 - `Field.interact`), beaten check via `trainer_sight.isDefeated`, flag via
 - `scripting.flags.setTrainerDefeated`, question via `ui.game3.message` +
@@ -59,31 +73,30 @@ topped up to the side's cap (Macho Brace / Pokerus multipliers kept).
 - for moves whose gen 4 class differs from their gen 3 type class; classes
 - from PokeAPI (`move.damage_class`, see Credits).
 
-## Emerald listing fix
+## Nature / ability writes
 
-A plain `RomText.at` override is not enough on Emerald:
-Emerald's action box reads its labels from the RSE scene manifest's
-`party.cursorOptions` array (`labels[15]` for the STORE slot). This mod
-writes TRAIN into that manifest entry while its row is present (restored on
-strip) and keeps the `RomText.at` override for FRLG.
-
-## Stub
-
-HIDDEN ability: the tab reports that hidden abilities are not in this port
-and changes nothing. Ability slots resolve from the native
-`src.core.game3.pokemon.abilities` pair.
-
-## Nature / ability / gender writes
-
-Nature, ability slot and gender all go through `mon.personality` (nature =
+Nature and ability slot go through `mon.personality` (nature =
 `personality % 25`, ability slot = parity, gender = low byte vs the ROM
 ratio), which is what the engine itself derives them from — no separate
 nature/ability fields are trusted. Changing ability forces the matching
-parity (odd = slot 2), so the pick survives engine recalculation; gender
-is preserved via the native gender check, or by pinning the personality
-low byte on engines without it. If no personality satisfies the request
-(e.g. a gender change with no engine gender data), the commit aborts with
+parity (odd = slot 2), so the pick survives engine recalculation; the
+mon's gender is preserved via the native gender check, or by pinning
+the personality low byte on engines without it. If no personality
+satisfies the request, the commit aborts with
 a `PERSONALITY FAILED` status and charges nothing.
+
+## Summary-screen editor
+
+The absorbed skills-inspector lives inside the native summary,
+behind SELECT (or F): a small menu offers EV, IV, APPLY and
+CANCEL. EV/IV opens a two-column stat grid (HP/ATK/DEF,
+SPATK/SPDEF/SPEED) with a CONFIRM row under it; A on a stat
+adjusts it (IV +1, EV +4, hold repeats), B steps back, and
+APPLY or CONFIRM opens the cost prompt for everything staged
+(NO backs out and drops staged changes). The profile page
+edits nature and ability slot. Rows under a raising nature
+draw in the engine's own red, under a lowering one in its
+blue. Costs: IV 200/pt, EV 125/pt, nature 2000, ability slot 5000.
 
 ## Flat 4 EVs
 

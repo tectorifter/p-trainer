@@ -1,7 +1,7 @@
 {
   "id": "pokemon-trainer",
   "name": "pokemon-trainer",
-  "version": "0.5.0",
+  "version": "0.6.4",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
@@ -16,7 +16,7 @@
   ],
   "dependencies": [],
   "optional_dependencies": [],
-  "description": "Emerald TRAIN editor: IVs, EVs, nature, ability + move tutor.",
+  "description": "Emerald summary-screen editor: IVs, EVs, nature, ability + move tutor.",
   "github": "https://github.com/tectorifter/p-trainer",
   "experimental": false,
   "conflicts": [],

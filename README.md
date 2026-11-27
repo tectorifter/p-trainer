@@ -1,23 +1,30 @@
 # pokemon-trainer
 
 The backstage pass to your own team — plus a mischievous set of
-levers for the whole region. Part TRAIN editor, part battle lab:
-sculpt your party to perfection, then twist Hoenn itself until it
-fights back exactly as hard as you want.
+levers for the whole region. Part summary-screen editor, part
+battle lab: sculpt your party to perfection, then twist Hoenn
+itself until it fights back exactly as hard as you want.
 
-## TRAIN: your Pokémon, your specs
+## Summary editor: your Pokémon, your specs
 
-Open the party menu in the field and there's a new row: TRAIN.
-Never on eggs, never mid-battle — just you and your roster, alone.
+Open any party mon's native summary screen and press SELECT
+(or F) on the skills page: a small menu offers EV, IV, APPLY
+and CANCEL. EV/IV opens a two-column stat grid with a CONFIRM
+row: A on a stat adjusts it (IV +1, EV +4, hold to repeat; B
+steps back), APPLY or CONFIRM opens the "This will cost XXXX,
+you want to proceed?" prompt for everything staged, and NO
+backs out of the editor dropping staged changes. The profile
+page edits nature (raised stat in the engine's red, lowered in
+its blue) and ability slot at the same prices.
+Remove the standalone RSE_Skills_Inspector if you
+still have it: this editor replaces it, and the old copy eats
+the summary keys before this one sees them.
 
-- **Page one** edits IVs, EVs, nature and gender, and swaps ability
-  slot 1/2 for 5000 on commit. (The HIDDEN tab is a stub for now —
-  it reports, it doesn't touch.)
-- **Page two (MOVES)** teaches from four lists drawn from the
-  game's own data: RELEARN (level-up moves at its level, free), TM,
-  EGG and TUTOR (5000 each), with a forget-slot picker. Even HM
-  slots can be replaced. Build the moveset the level-up chart
-  always denied you.
+Mons with tutor moves to learn get a TUTOR row in the field
+party menu, and mons with egg moves an EGG MOVE row: each opens
+straight into that locked move list (B closes), teaching for
+5000 a move. The EGG list shows every inheritable egg move, even
+ones the mon already knows (re-teaching those is refused, free).
 - **1512 EVS** (OFF / NPC / PLAYER / BOTH): shatter the 510 total —
   252 per stat stays, the ceiling becomes 1512 for whichever side
   you choose. Safari-plus's matching toggle covers your side too;
@@ -64,9 +71,15 @@ Flip them and the region reshapes around you:
 
 ## Layout
 
-- `main.lua` — entry: options, EV-cap exports, boots everything.
+- `main.lua` — entry: options, EV-cap exports, save-editor detect, boots everything.
+- `overworld/editor_guard.lua` — save-editor host only: no gameplay
+  seams, plus a `mods.loaded` refill of missing live species names
+  from the merged registry (national_dex combo fix).
 - `shared.lua` — roster walks, side split, wild check, stat recompute.
-- `train/train_screen.lua` — the TRAIN editor + party-menu injection.
+- `train/move_tutor.lua` — the TUTOR + EGG MOVE party-menu rows
+  and their locked move-teaching screens.
+- `train/summary_inspector.lua` — the IV/EV/nature/ability
+  editor inside the native summary screen.
 - `battle/item_reuse.lua`, `battle/exp_share.lua`, `battle/doubles.lua`,
 - `battle/level_adapt.lua`, `battle/difficulty.lua` — battle systems.
 - `battle/enemy_evo.lua` — enemy trainer evolution at battle start.

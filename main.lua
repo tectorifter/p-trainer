@@ -130,7 +130,26 @@ return function(mod)
     return cap
   end
   boot("shared", function() loadSibling("shared.lua")(mod) end)
-  boot("train_screen", function() loadSibling("train/train_screen.lua")(mod) end)
+  local function saveEditorHost()
+    local okG, Gen = pcall(require, "Gen")
+    if not (okG and type(Gen) == "table"
+      and type(Gen.bindGame3Data) == "function") then return false end
+    local okA, App = pcall(require, "App")
+    if not (okA and type(App) == "table"
+      and type(App.getState) == "function") then return false end
+    local okS, S = pcall(App.getState)
+    if not (okS and S ~= nil) then return false end
+    local okV, GV = pcall(require, "src.core.GameVersion")
+    return okV and type(GV) == "table"
+      and type(GV.generation) == "function" and GV.generation() == 3
+  end
+  mod.exports.ptEditorHost = saveEditorHost()
+  if mod.exports.ptEditorHost then
+    mod.log:info("pokemon-trainer: save editor host; gameplay seams stay off")
+    boot("editor_guard", function() loadSibling("overworld/editor_guard.lua")(mod) end)
+  else
+  boot("move_tutor", function() loadSibling("train/move_tutor.lua")(mod) end)
+  boot("summary_inspector", function() loadSibling("train/summary_inspector.lua")(mod) end)
   boot("item_reuse", function() loadSibling("battle/item_reuse.lua")(mod) end)
   boot("exp_share", function() loadSibling("battle/exp_share.lua")(mod) end)
   boot("damage_split", function() loadSibling("battle/damage_split.lua")(mod) end)
@@ -167,5 +186,6 @@ return function(mod)
       end)
     end)
   end)
-  mod.log:info("pokemon-trainer: loaded (gen3 TRAIN port)")
+  end
+  mod.log:info("pokemon-trainer: loaded (gen3 summary editor)")
 end

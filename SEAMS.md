@@ -4,40 +4,84 @@ Every engine function the mod wraps, and every hook/event/option it
 touches. Direct `Bridge.start` / `shop_menu.show` / `gainEVs`
 replacements use `__pt*Wrapped` idempotence flags: a second boot (or
 a late module load) re-installs nothing. Hook-composed rows
-(`ui.party.submenu`, `trainer.party`, `world.talk`, `exp.gain`,
+(`trainer.party`, `world.talk`, `exp.gain`,
 `battle.damage`) call through to native first and only transform
-real results. Unless noted, wrappers call through when the mod's
-option is OFF, the result is nil, or the arguments aren't ours. No
-mod save keys — TRAIN commits write straight to the mon (personality,
-EVs, moves); everything else is session state.
+real results. The summary-screen editor adds no party rows and
+subscribes to no party hook. Unless noted, wrappers call through when
+the mod's option is OFF, the result is nil, or the arguments aren't
+ours. No mod save keys — summary commits write straight to the mon
+(personality, EVs, moves); everything else is session state.
 
 Boot (`main.lua`): options define, EV-cap exports (`evScope` /
 `evTotalCap` / `evTotalCapFor`, which reads safari-plus'
-`evTotalCap` live for the player side), then shared →
-train_screen → item_reuse → exp_share → damage_split → doubles →
+`evTotalCap` live for the player side), save-editor detect, then shared →
+move_tutor → summary_inspector → item_reuse → exp_share → damage_split → doubles →
 enemy_evo → gym_teams → level_adapt → difficulty → rematch →
 ev_flat4 → macho_brace → npc_stamp, each step pcall-isolated (the
 boot wrapper logs the label and continues).
+In the save-editor host (Gen + App session + gen 3, same detect as
+national_dex) only shared + `overworld/editor_guard.lua` boot: no
+battle/world/UI seams install there, and a `mods.loaded` check
+refills any missing live species names from the merged pokemon
+registry (the dex-848 save-editor failure).
 
-## TRAIN row (`train/train_screen.lua`)
+## Move tutor (`train/move_tutor.lua`)
 
-- `ui.party.submenu` hook (next-first composition): appends
-  `{ label = "TRAIN", onSelect }` before CANCEL. Gates, all
-  pass-through: truthy `ctx.battle`, egg mons, non-field sessions,
+- Raw `PartyMenu.handleInput` patch, Highlander's method: on the
+  list-to-action transition the shared string `ACTIONS` table is
+  edited in place (TUTOR inserted before CANCEL while the mon has
+  unlearned tutor moves, EGG MOVE while it has unlearned egg
+  moves; stale rows removed when gates fail),
+  `PartyMenu._actionTexts` is rebuilt
+  for the new rows (literal texts for TUTOR/EGG MOVE, fresh
+  compute per row, so inserts/removals
+  by either mod can never misalign labels), and A on a row is
+  consumed to open a locked move screen: TUTOR opens the move
+  list locked to TUTOR on `pttutor`, EGG MOVE locked to EGG on
+  `pteggmove` (own stack ids, so layers can't collide). The EGG
+  list unions `Pokemon.eggMoves` across the mon's whole evolution
+  line (reverse map derived from live engine evolution data,
+  nothing hardcoded) including known moves
+  (re-teaching one reports ALREADY KNOWN, free). Locked lists
+  cost 5000 a teach, ignore left/right,
+  and close on B. Gates, all pass-through: truthy
+  `PartyMenu._battle`, egg mons, non-field sessions,
   `PM._previousMode == "battle_switch"`, SHIFT / SEND OUT / ENTER /
-  NO ENTRY rows present, SUMMARY + CANCEL both absent, and an
-  existing TRAIN row (dupe-safe).
-- `battle.started`: re-applies `Pokemon.applyStats` to every
-  committed gen-3 mon (non-eggs), so staged IV/EV/nature commits
-  take effect on the next battle.
-- Screen: `src.render.Font` small face, 240x160 1:1 over an
-  FRLG-blue surround, `src.core.GameVersion` gen check, a draw
-  self-test before `Stack3.push("pttrain", ...)` (hideBelow +
-  fullscreen); a failed self-test or push only warns.
-- Writes: IVs/EVs via staged stats + `applyStats` (HP-ratio carry),
-  nature/ability/gender via `mon.personality`, moves from the
-  engine's own learnset/TM/egg/tutor tables with a forget-slot
-  picker; TRAIN costs come out of the party-menu session money.
+  NO ENTRY rows present, SUMMARY + CANCEL both absent. Non-string lists
+  (another mod's hook layer active) are left fully alone. No
+  `ui.party.submenu` subscription, so the engine keeps the raw
+  string list Highlander's sort/RENAME/RELEARN patches drive on.
+
+## Summary screen (`train/summary_inspector.lua`)
+
+- Hooks each native summary skin once (FireRed/LeafGreen menu,
+- Emerald `rse/summary_menu` draw, Ruby/Sapphire `rs/summary_menu`),
+- the same single-wrap style as the national-dex marks: native
+- runs first, this draws after it, and input passes through unless
+- the editor owns the key. SELECT (or F) opens a small EV /
+  IV / APPLY / CANCEL menu on the skills page; EV/IV opens a
+  two-column stat grid (HP/ATK/DEF, SPATK/SPDEF/SPEED) with
+  nature-raised rows in the engine's own red and nature-lowered
+  rows in its blue, plus a CONFIRM row under it. APPLY opens the
+  cost prompt for everything staged. A on a stat adjusts it
+  (up +1 IV / +4 EV with hold-repeat, down -1 / -4; EVs clamp
+  to the side's total cap), B steps back a level, and A/START on
+  CONFIRM opens the cost prompt. While the HUD is open A/B/
+  arrows stay inside it (B can't leave the summary); closing it
+  returns to the native keys. Draw wraps are re-asserted on every
+  summary open, so a national-dex-style boot-time rebuild of a
+  skin draw can't strand the overlay. The profile
+  page edits
+  nature (A cycles at 2000) and ability slot (A enters slot cycling
+  over the mon's own registered abilities, A confirms, 5000);
+  START or B-after-changes opens "This will cost XXXX, you want to
+  proceed?" (YES/NO, IV 200/pt, EV 125/pt). NO backs out of the
+  editor and drops staged changes. Commits rewrite staged
+  IVs/EVs + `personality` + ability + `applyStats` (HP-ratio carry).
+  Eggs, enemy parties, trade/factory contexts, move-select
+  mode, box copies and battles pass straight through to native.
+  Wraps once (no per-frame re-wrapping); a leftover standalone
+  inspector copy installed later still eats keys first, so remove it.
 
 ## Battle systems (`battle/*.lua`)
 
@@ -132,6 +176,6 @@ boot wrapper logs the label and continues).
   `gym_teams` (OFF), `ev_4` (OFF), `macho_brace` (OFF).
 - Save keys: none.
 - Events subscribed: `battle.started` (item snapshot, difficulty,
-  level adapt, enemy evo, rematch tracking, TRAIN stat re-apply, NPC
+  level adapt, enemy evo, rematch tracking, NPC
   1512 stamp), `battle.ended` (item restore, exp-share clearing,
   EV-clone reconcile, rematch tracking).

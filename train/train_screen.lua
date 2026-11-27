@@ -300,6 +300,72 @@ return function(mod)
     end
     return tonumber(s)
   end
+  local prevosCache = nil
+  local function prevosOf(P, species)
+    if prevosCache == nil then
+      prevosCache = {}
+      if type(P.evolutions) == "function"
+          and type(P.name) == "function" then
+        local blank = 0
+        local id = 1
+        while blank < 64 and id <= 65536 do
+          local okN, nm = pcall(P.name, id)
+          if okN and type(nm) == "string" and nm ~= ""
+              and nm ~= "??????????" then
+            blank = 0
+            local okE, rows = pcall(P.evolutions, id)
+            if okE and type(rows) == "table" then
+              for _, evo in ipairs(rows) do
+                local to = 0
+                if type(evo) == "table" then
+                  to = tonumber(evo.target or evo[3]) or 0
+                end
+                if to > 0 then
+                  local s = prevosCache[to] or {}
+                  s[#s + 1] = id
+                  prevosCache[to] = s
+                end
+              end
+            end
+          else
+            blank = blank + 1
+          end
+          id = id + 1
+        end
+      end
+    end
+    return prevosCache[species] or {}
+  end
+  local function lineSpecies(P, sp)
+    local seen = { [sp] = true }
+    local out = { sp }
+    local queue = { sp }
+    while #queue > 0 do
+      local cur = table.remove(queue, 1)
+      local nexts = {}
+      for _, p in ipairs(prevosOf(P, cur)) do nexts[#nexts + 1] = p end
+      if type(P.evolutions) == "function" then
+        local ok, rows = pcall(P.evolutions, cur)
+        if ok and type(rows) == "table" then
+          for _, evo in ipairs(rows) do
+            local to = 0
+            if type(evo) == "table" then
+              to = tonumber(evo.target or evo[3]) or 0
+            end
+            if to > 0 then nexts[#nexts + 1] = to end
+          end
+        end
+      end
+      for _, n in ipairs(nexts) do
+        if not seen[n] then
+          seen[n] = true
+          out[#out + 1] = n
+          queue[#queue + 1] = n
+        end
+      end
+    end
+    return out
+  end
   local function pushMoveId(out, seen, moveId, level)
     local id = tonumber(moveId)
     if not id or id < 1 or seen[id] then return end
@@ -328,9 +394,13 @@ return function(mod)
       end
     end
     if type(P.eggMoves) == "function" then
-      local ok, list = pcall(P.eggMoves, sp)
-      if ok and type(list) == "table" then
-        for _, id in ipairs(list) do pushMoveId(pools.egg, seenE, id, nil) end
+      for _, lineSp in ipairs(lineSpecies(P, sp)) do
+        local ok, list = pcall(P.eggMoves, lineSp)
+        if ok and type(list) == "table" then
+          for _, id in ipairs(list) do
+            pushMoveId(pools.egg, seenE, id, nil)
+          end
+        end
       end
     end
     if ML and type(ML.tutorMoveCount) == "function"
@@ -563,7 +633,7 @@ return function(mod)
   end
   local Screen = {}
   Screen.__index = Screen
-  function Screen.new(game, mon)
+  function Screen.new(game, mon, opts)
     local self = setmetatable({
       game = game, mon = mon,
       mode = "stats", focus = "tabs", page = TAB_IV, row = 1, col = 1,
@@ -618,6 +688,15 @@ return function(mod)
       self.baseEvs[key] = self.evs[key]
     end
     self:buildMoveList()
+    if type(opts) == "table" and tonumber(opts.category) then
+      self.mode = "moves"
+      self.category = clamp(tonumber(opts.category), 1, 4)
+      self.moveIndex = 1
+      self.lockedCategory = opts.locked and true or false
+      self.pending = nil
+      self.pickingSlot = false
+      self:buildMoveList()
+    end
     return self
   end
   function Screen:evTotal()
@@ -690,9 +769,10 @@ return function(mod)
     local cats = { "relearn", "tm", "egg", "tutor" }
     local pools = nativeMovePools(mon)
     local want = pools[cats[self.category] or "relearn"] or {}
+    local showKnown = (self.category == 3)
     for _, e in ipairs(want) do
       if e.level == nil or e.level <= level then
-        if not known[e.id] then
+        if showKnown or not known[e.id] then
           known[e.id] = true
           self.moveList[#self.moveList + 1] = e
         end
@@ -810,6 +890,28 @@ return function(mod)
     if not gen3MoveName(moveId) then
       self.status = "MOVE NOT IN ROM DATA"
       return
+    end
+    do
+      local Pk = g3Pokemon()
+      for i = 1, 4 do
+        local id = nil
+        if Pk and type(Pk.moveIdAt) == "function" then
+          local ok, v = pcall(Pk.moveIdAt, mon, i)
+          if ok then id = tonumber(v) end
+        elseif mon and type(mon.moves) == "table" then
+          local m = mon.moves[i]
+          if type(m) == "number" then id = m
+          elseif type(m) == "table" then
+            id = tonumber(m.id or m.move or m.moveId)
+          end
+        end
+        if id == moveId then
+          self.pending = nil
+          self.pickingSlot = false
+          self.status = "ALREADY KNOWN"
+          return
+        end
+      end
     end
     local save = liveSave()
     local teachCost = self:moveCost()
@@ -967,12 +1069,14 @@ return function(mod)
         and input:wasPressed(k)
     end
     if pressed("left") then
+      if self.lockedCategory then return end
       self.category = ((self.category - 2) % 4) + 1
       self.moveIndex = 1
       self:buildMoveList()
       return
     end
     if pressed("right") then
+      if self.lockedCategory then return end
       self.category = (self.category % 4) + 1
       self.moveIndex = 1
       self:buildMoveList()
@@ -996,6 +1100,10 @@ return function(mod)
       return
     end
     if pressed("b") then
+      if self.lockedCategory then
+        self.game.stack:pop()
+        return
+      end
       self.mode = "stats"
       self.pending = nil
       self.pickingSlot = false
@@ -1554,73 +1662,79 @@ return function(mod)
       if not Frlg then
         mod.log:warn("pokemon-trainer: TRAIN not injected -- no gen3 font")
       else
-      local screenRef = {}
-      local TrainG3 = {}
-      TrainG3.open = false
-      function TrainG3.isOpen() return TrainG3.open end
-      function TrainG3.update(dt)
-        local scr = screenRef.current
-        if not scr then return end
-        if scr.abilityWarnT and scr.abilityWarnT > 0 then
-          local step = tonumber(dt) or 0
-          if step <= 0 then step = 1 / 60 end
-          scr.abilityWarnT = scr.abilityWarnT - step
-          if scr.abilityWarnT <= 0 then
-            scr.abilityWarnT = nil
-            scr.abilityIdx = 1
-            if scr.status == "NO SECONDARY ABILITY" then scr.status = "" end
+      local layers = {}
+      local function moveLayer(stackId)
+        if layers[stackId] then return layers[stackId] end
+        local ref = {}
+        local T = {}
+        T.open = false
+        function T.isOpen() return T.open end
+        function T.update(dt)
+          local scr = ref.current
+          if not scr then return end
+          if scr.abilityWarnT and scr.abilityWarnT > 0 then
+            local step = tonumber(dt) or 0
+            if step <= 0 then step = 1 / 60 end
+            scr.abilityWarnT = scr.abilityWarnT - step
+            if scr.abilityWarnT <= 0 then
+              scr.abilityWarnT = nil
+              scr.abilityIdx = 1
+              if scr.status == "NO SECONDARY ABILITY" then scr.status = "" end
+            end
+          end
+          scr.game.input = nil
+          scr:update(dt)
+          if scr.broken then
+            ref.current = nil
+            T.open = false
+            pcall(Stack3.pop, stackId)
           end
         end
-        scr.game.input = nil
-        scr:update(dt)
-        if scr.broken then
-          screenRef.current = nil
-          TrainG3.open = false
-          pcall(Stack3.pop, "pttrain")
+        function T.draw()
+          local scr = ref.current
+          if not scr then return end
+          local G = love.graphics
+          local W, H = 240, 160
+          local okD, Display = pcall(require, "src.core.game3.display")
+          if okD and type(Display) == "table" then
+            W = tonumber(Display.W) or W
+            H = tonumber(Display.H) or H
+          end
+          G.setColor(0.16, 0.35, 0.72, 1)
+          G.rectangle("fill", 0, 0, W, H)
+          local w, h = scr:panelSize()
+          local ox = math.floor((W - w) / 2 + 0.5)
+          local oy = math.floor((H - h) / 2 + 0.5)
+          G.push("all")
+          G.translate(ox, oy)
+          scr:draw()
+          G.pop()
+          G.setColor(1, 1, 1, 1)
         end
-      end
-      function TrainG3.draw()
-        local scr = screenRef.current
-        if not scr then return end
-        local G = love.graphics
-        local W, H = 240, 160
-        local okD, Display = pcall(require, "src.core.game3.display")
-        if okD and type(Display) == "table" then
-          W = tonumber(Display.W) or W
-          H = tonumber(Display.H) or H
+        function T.handleInput(input)
+          if not input then return end
+          local scr = ref.current
+          if not scr then
+            T.open = false
+            pcall(Stack3.pop, stackId)
+            return
+          end
+          scr.game.input = input
+          scr:update(0)
+          scr.game.input = nil
+          if scr.broken then
+            ref.current = nil
+            T.open = false
+            pcall(Stack3.pop, stackId)
+          end
         end
-        G.setColor(0.16, 0.35, 0.72, 1)
-        G.rectangle("fill", 0, 0, W, H)
-        local w, h = scr:panelSize()
-        local ox = math.floor((W - w) / 2 + 0.5)
-        local oy = math.floor((H - h) / 2 + 0.5)
-        G.push("all")
-        G.translate(ox, oy)
-        scr:draw()
-        G.pop()
-        G.setColor(1, 1, 1, 1)
-      end
-      function TrainG3.handleInput(input)
-        if not input then return end
-        local scr = screenRef.current
-        if not scr then
-          TrainG3.open = false
-          pcall(Stack3.pop, "pttrain")
-          return
+        function T.close()
+          ref.current = nil
+          T.open = false
+          pcall(Stack3.pop, stackId)
         end
-        scr.game.input = input
-        scr:update(0)
-        scr.game.input = nil
-        if scr.broken then
-          screenRef.current = nil
-          TrainG3.open = false
-          pcall(Stack3.pop, "pttrain")
-        end
-      end
-      function TrainG3.close()
-        screenRef.current = nil
-        TrainG3.open = false
-        pcall(Stack3.pop, "pttrain")
+        layers[stackId] = { layer = T, ref = ref }
+        return layers[stackId]
       end
       local function trainAllowedSession()
         local okP, Profile = pcall(require, "src.core.game3.profile")
@@ -1631,19 +1745,23 @@ return function(mod)
         if fam == nil then return true end
         return fam == "frlg" or fam == "rse" or fam == "emerald"
       end
-      local function openGen3Train(mon)
+      local function openGen3Moves(mon, category, stackId, lockCat)
         if type(mon) ~= "table" or mon.isEgg then return end
         gen3Session = PM._session
         local fakeGame = { data = nil, input = nil, stack = {} }
         fakeGame.stack.pop = function()
-          screenRef.current = nil
-          TrainG3.open = false
-          pcall(Stack3.pop, "pttrain")
+          local L = layers[stackId]
+          if L then
+            L.ref.current = nil
+            L.layer.open = false
+          end
+          pcall(Stack3.pop, stackId)
         end
         fakeGame.stack.push = function() end
-        local ok, scr = pcall(Screen.new, fakeGame, mon)
+        local ok, scr = pcall(Screen.new, fakeGame, mon,
+          { category = category, locked = lockCat })
         if not (ok and scr) then
-          mod.log:warn("pokemon-trainer: TRAIN screen failed to open (%s)",
+          mod.log:warn("pokemon-trainer: move screen failed to open (%s)",
             tostring(scr))
           return
         end
@@ -1652,59 +1770,156 @@ return function(mod)
         local okUp = pcall(scr.update, scr, 0)
         scr.game.input = nil
         if not (okUp and not scr.broken) then
-          mod.log:warn("pokemon-trainer: TRAIN screen failed its open "
+          mod.log:warn("pokemon-trainer: move screen failed its open "
             .. "self-test, not pushing")
           return
         end
         local okDrawSelf = pcall(scr.draw, scr)
         if not (okDrawSelf and not scr.broken) then
-          mod.log:warn("pokemon-trainer: TRAIN screen failed its draw "
+          mod.log:warn("pokemon-trainer: move screen failed its draw "
             .. "self-test, not pushing")
           return
         end
-        screenRef.current = scr
-        TrainG3.open = true
-        local okPush = pcall(Stack3.push, "pttrain", TrainG3,
+        local L = moveLayer(stackId)
+        L.ref.current = scr
+        L.layer.open = true
+        local okPush = pcall(Stack3.push, stackId, L.layer,
           { hideBelow = true, fullscreen = true })
         if not okPush then
-          screenRef.current = nil
-          TrainG3.open = false
-          mod.log:warn("pokemon-trainer: TRAIN screen failed to push")
+          L.ref.current = nil
+          L.layer.open = false
+          mod.log:warn("pokemon-trainer: move screen failed to push")
         end
       end
-      mod.hooks:wrap("ui.party.submenu", function(nextFn, game, items, mon, ctx)
-        local out = nextFn(game, items, mon, ctx)
-        if type(out) ~= "table" then out = items end
-        if type(out) ~= "table" then return out end
-        if type(ctx) == "table" and ctx.battle then return out end
-        if type(mon) == "table" and mon.isEgg then return out end
-        if not trainAllowedSession() then return out end
-        if PM._previousMode == "battle_switch" then return out end
-        local hasSummary, hasCancel = false, false
-        for _, row in ipairs(out) do
-          if type(row) == "table" then
-            if row.action == "SHIFT" or row.action == "SEND OUT"
-                or row.action == "ENTER" or row.action == "NO ENTRY" then
-              return out
+      local function openGen3Train(mon)
+        openGen3Moves(mon, nil, "pttrain", false)
+      end
+      if not PM.__ptTrainHandleWrapped then
+        PM.__ptTrainHandleWrapped = true
+        local function syncTexts(list)
+          local texts = {}
+          for i = 1, #list do
+            local act = list[i]
+            if act == "TRAIN" or act == "TUTOR" or act == "EGG MOVE" then
+              texts[i] = act
+            else
+              local ok, v = pcall(PM._cursorOptionText, act)
+              texts[i] = (ok and v ~= nil) and v or act
             end
-            if row.action == "SUMMARY" then hasSummary = true end
-            if row.action == "CANCEL" then hasCancel = true end
-            if row.action == nil and type(row.onSelect) == "function"
-                and row.label == "TRAIN" then return out end
+          end
+          PM._actionTexts = { list = list, texts = texts }
+        end
+        local function trainRowWanted(list)
+          if not trainAllowedSession() then return false end
+          if PM._previousMode == "battle_switch" then return false end
+          if PM._battle then return false end
+          local mon = PM._party and PM._party[PM.cursor]
+          if type(mon) == "table" and mon.isEgg then return false end
+          local hasSummary, hasCancel = false, false
+          for i = 1, #list do
+            local act = list[i]
+            if type(act) ~= "string" then return false end
+            if act == "SHIFT" or act == "SEND OUT" or act == "ENTER"
+                or act == "NO ENTRY" then
+              return false
+            end
+            if act == "SUMMARY" then hasSummary = true end
+            if act == "CANCEL" then hasCancel = true end
+          end
+          return hasSummary and hasCancel
+        end
+        local function movePoolsFor(mon)
+          if type(mon) ~= "table" or mon.isEgg then return nil end
+          local ok, pools = pcall(nativeMovePools, mon)
+          if ok and type(pools) == "table" then return pools end
+          return nil
+        end
+        local function syncTrainRow()
+          local list = PM.ACTIONS
+          if type(list) ~= "table" then return end
+          local mon = PM._party and PM._party[PM.cursor]
+          local pools = movePoolsFor(mon)
+          local wantTrain = trainRowWanted(list)
+          local wantTutor = trainRowWanted(list)
+            and pools ~= nil and type(pools.tutor) == "table"
+            and #pools.tutor > 0
+          local wantEgg = trainRowWanted(list)
+            and pools ~= nil and type(pools.egg) == "table"
+            and #pools.egg > 0
+          for _, row in ipairs({ "TRAIN", "TUTOR", "EGG MOVE" }) do
+            local at = nil
+            for i = 1, #list do
+              if list[i] == row then
+                at = i
+                break
+              end
+            end
+            local want = (row == "TRAIN" and wantTrain)
+              or (row == "TUTOR" and wantTutor)
+              or (row == "EGG MOVE" and wantEgg)
+            if want then
+              if at == nil then
+                local pos = #list + 1
+                for i = 1, #list do
+                  if list[i] == "CANCEL" then
+                    pos = i
+                    break
+                  end
+                end
+                table.insert(list, pos, row)
+                syncTexts(list)
+              end
+            elseif at ~= nil then
+              table.remove(list, at)
+              syncTexts(list)
+              local cur = PM.actionCursor or 1
+              if cur > #list then cur = #list end
+              if cur < 1 then cur = 1 end
+              PM.actionCursor = cur
+            end
           end
         end
-        if not (hasSummary and hasCancel) then return out end
-        local entry = { label = "TRAIN",
-          onSelect = function(target) openGen3Train(target) end }
-        for i, row in ipairs(out) do
-          if type(row) == "table" and row.action == "CANCEL" then
-            table.insert(out, i, entry)
-            return out
+        local function tryTrainSelect(input)
+          if PM.mode ~= "action" then return false end
+          if not (input and input.wasPressed) then return false end
+          if not input:wasPressed("a") then return false end
+          local list = PM.ACTIONS
+          if type(list) ~= "table" then return false end
+          local row = list[PM.actionCursor or 1]
+          if row ~= "TRAIN" and row ~= "TUTOR" and row ~= "EGG MOVE" then
+            return false
+          end
+          local mon = PM._party and PM._party[PM.cursor]
+          if type(mon) ~= "table" or mon.isEgg then return false end
+          pcall(function()
+            require("src.core.game3.audio").playSe("SE_SELECT")
+          end)
+          PM.mode = PM._previousMode or "list"
+          if row == "TUTOR" then
+            openGen3Moves(mon, 4, "pttutor", true)
+          elseif row == "EGG MOVE" then
+            openGen3Moves(mon, 3, "pteggmove", true)
+          else
+            openGen3Train(mon)
+          end
+          return true
+        end
+        local origInput = PM.handleInput
+        if type(origInput) == "function" then
+          PM.handleInput = function(input, ...)
+            local before = PM.mode
+            if before == "action" then
+              local okC, consumed = pcall(tryTrainSelect, input)
+              if okC and consumed then return end
+            end
+            local r = { origInput(input, ...) }
+            if before == "list" and PM.mode == "action" then
+              pcall(syncTrainRow)
+            end
+            return (table.unpack or unpack)(r)
           end
         end
-        out[#out + 1] = entry
-        return out
-      end)
+      end
       end
     end
     mod.events:on("battle.started", function()
